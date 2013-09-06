@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8">
+  <title></title>
+</head>
+<body>
+  <div id="wrapper">
+    <canvas id="viewport" width=500 height=500></canvas>
+  </div>
+  <script type="text/javascript" src="glsl.min.js"></script>
+  <script type="text/javascript" src="loader.js"></script>
+  <script type="text/javascript" src="main.js"></script>
+  <script type="text/javascript">
+  Loader.text("game.frag", function (frag) {
+    main(frag);
+  });
+  </script>
+</body>
+</html>
