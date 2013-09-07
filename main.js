@@ -1,5 +1,21 @@
 (function () {
 
+var INF_BPM = 30;
+
+var vars = {
+  time: 0,
+  useraction: -9999,
+  boom: -9999,
+  boomSpeed: 0.2,
+  bpm: 50,
+  successState: 0.0, 
+  fullPulse: false,
+  glitch: 0.0,
+  frequencyData: new Float32Array(32)
+};
+
+var E = (function(_){return{pub:function(a,b,c,d){for(d=-1,c=[].concat(_[a]);c[++d];)c[d](b)},sub:function(a,b){(_[a]||(_[a]=[])).push(b)}}})({});
+
 function clamp (x, min, max) {
   return Math.min(Math.max(x, min), max);
 };
@@ -8,6 +24,20 @@ function smoothstep (min, max, x) {
   x = clamp((x-min)/(max-min), 0.0, 1.0);
   return x*x*(3-2*x);
 };
+
+var NOTES = (function () {
+  var notes = {};
+  var toneSymbols = "CcDdEFfGgAaB";
+  function noteToFrequency (note) {
+    return Math.pow(2, (note-69)/12)*440;
+  };
+  for (var octave = 0; octave < 8; ++octave) {
+    for (var t = 0; t < 12; ++t) {
+      notes[toneSymbols[t]+octave] = noteToFrequency(octave * 12 + t);
+    }
+  }
+  return notes;
+}());
 
 var audio = (function() {
   var ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -20,6 +50,10 @@ var audio = (function() {
   out.connect(filter);
   filter.connect(outCompressor);
   outCompressor.connect(ctx.destination);
+  var analyser = ctx.createAnalyser();
+  analyser.fftSize = vars.frequencyData.length * 2;
+  analyser.getFloatFrequencyData(vars.frequencyData);
+  outCompressor.connect(analyser);
 
   
   function envelope (gainNode, time, volume, duration, a, d, s, r) {
@@ -36,6 +70,12 @@ var audio = (function() {
     this.osc.start(0);
     this.out = this.gain = ctx.createGainNode();
     this.osc.connect(this.gain);
+  }
+
+  function FM () {
+    OscGain.call(this);
+    this.mod = new OscGain();
+    this.mod.out.connect(this.osc.frequency);
   }
 
   function Bass (freq, attack, duration, fall) {
@@ -76,40 +116,34 @@ var audio = (function() {
     var filter = ctx.createBiquadFilter();
     gain.connect(filter);
     filter.type = "lowpass";
-    filter.frequency.value = 100;
-    filter.Q.value = 0;
 
     this.white = whiteNoise;
     this.gain = gain;
     this.out = this.filter = filter;
   }
 
-  var bass = new Bass(100, 0.05, 0.2, 0.3);
+  var bass = new Bass(80, 0.05, 0.2, 0.3);
   bass.osc.type = "triangle";
   bass.out.connect(out);
 
-  var osc = new OscGain();
-  osc.osc.frequency.value = 100;
+  var osc = new FM();
+  osc.osc.type = "triangle";
   osc.gain.gain.value = 0.1;
   osc.out.connect(out);
 
-  var lfoVolume = new OscGain();
-  lfoVolume.osc.frequency.value = 0.5;
-  lfoVolume.gain.gain.value = 1000;
-  filter.frequency.value = 2000;
+  filter.frequency.value = 20000;
   filter.Q.value = 0;
-  lfoVolume.out.connect(filter.frequency);
 
   var osc2 = new OscGain();
   osc2.osc.frequency.value = 150;
   osc2.osc.detune.value = 5;
-  osc2.gain.gain.value = 0.1;
+  osc2.gain.gain.value = 0.2;
   osc2.out.connect(out);
 
   var osc3 = new OscGain();
   osc3.osc.type = "sawtooth";
   osc3.osc.frequency.value = 300;
-  osc3.gain.gain.value = 0.01;
+  osc3.gain.gain.value = 0.05;
 
   var noise = new Noise();
   noise.filter.frequency.value = 180;
@@ -117,14 +151,67 @@ var audio = (function() {
   noise.gain.gain.value = 0.05;
   noise.out.connect(out);
 
-  function update (time) {
 
+  var smallMelo;
+  with (NOTES) {
+    smallMelo = [D3,E3,C3,G3];
+  }
+  N=NOTES;
+
+  function tick (i, time) {
+    if (i>0 && i % 128 == 0) {
+      set("glitch", 0.1);
+      set("fullPulse", true);
+    }
+    if (i % 128 === 16) {
+      set("glitch", 0);
+      set("fullPulse", false);
+    }
+
+    if (i % 4 === 0) {
+      audio.bass.trigger(time);
+      E.pub("boom");
+    }
+    var oscFreq = smallMelo[Math.floor(i/4) % 4];
+    osc.osc.frequency.value = oscFreq;
+    osc.mod.gain.gain.value = oscFreq;
+    osc.mod.osc.frequency.value = oscFreq * 2;
+  }
+
+  var ticksPerBeat = 4;
+  var scheduleAheadTime = 0.1;
+  var lastTickTime = -60 / (ticksPerBeat * vars.bpm);
+  var currentTick = -1;
+  function update (time, gameTime) {
+    var tickTime = getTickTime();
+    var nextTickTime;
+    while ((nextTickTime = lastTickTime + tickTime) < gameTime + scheduleAheadTime) {
+      var audioTickTime = nextTickTime + (time - gameTime);
+      currentTick ++;
+      lastTickTime = nextTickTime;
+      tick(currentTick, audioTickTime);
+    }
+    analyser.getFloatFrequencyData(vars.frequencyData);
+  }
+
+  function getTickTime () {
+    return 60 / (ticksPerBeat * vars.bpm);
+  }
+
+  function getCurrentBassTime () {
+    return lastTickTime - getTickTime() * (currentTick % 4);
+  }
+
+  function getBassInterval () {
+    return 4 * getTickTime();
   }
 
   return {
     ctx: ctx,
     bass: bass,
     update: update,
+    getCurrentBassTime: getCurrentBassTime,
+    getBassInterval: getBassInterval,
     start: function () {
       out.gain.value = 1;
     },
@@ -135,16 +222,6 @@ var audio = (function() {
 }());
 
 var set; // will be defined in the main()
-var vars = {
-  time: 0,
-  boom: -9999,
-  boomSpeed: 0.2,
-  bpm: 20,
-  successState: 0.0, 
-  statePower: 0.0,
-  glitch: 0.0
-};
-
 var pauseDuration = 0;
 
 function getAbsoluteTime () {
@@ -154,46 +231,94 @@ function getGameTime (t) {
   return (t||getAbsoluteTime()) - pauseDuration; 
 }
 
-function boom () {
-  var t = getAbsoluteTime();
-  audio.bass.trigger(t);
-  set("boom", getGameTime(t));
-}
-
 function spaceup () {
 }
 
+var lastAction = 0;
 function spacedown () {
-  set("successState", Math.random() < 0.5 ? 1.0 : 0.0);
-  boom();
+  var gt = getGameTime();
+  var currentBassTime = audio.getCurrentBassTime();
+  var bassTime = audio.getBassInterval();
+
+  var d = gt - currentBassTime;
+  var delta = d - bassTime;
+  if (delta < -bassTime/2) delta += bassTime;
+
+  var percentDelta = 2 * delta / bassTime;
+  var absDelta = Math.abs(percentDelta);
+
+  var bpm = vars.bpm;
+  var INF = -0.4;
+  var SUP = 0.3;
+
+  if (percentDelta < INF) {
+    bpm *= 0.8;
+    set("successState", 0)//Math.max(0, 1 - percentDelta/INF));
+  }
+  else if (percentDelta > SUP) {
+    bpm *= 0.8;
+    set("successState", 0)//Math.min(1, percentDelta/SUP));
+  }
+  else {
+    bpm = bpm - (0.5 * bpm * percentDelta);
+    var d = percentDelta < 0 ?
+      Math.max(0, 1-percentDelta/INF) :
+      Math.max(0, 1-percentDelta/SUP) ;
+    set("successState", d);
+  }
+
+  bpm = Math.min(200, bpm);
+
+  set("bpm", bpm);
+
+  set("useraction", gt);
+  lastAction = gt;
+
+  if (bpm < INF_BPM) {
+    E.pub("gameover", 42);
+  }
 }
 
 function init () {
+  E.sub("boom", function () {
+    var gt = getGameTime();
+    set("boom", gt);
+  });
   audio.start();
 }
 
 function update () {
-  var time = getGameTime();
-  audio.update(time);
-  this.set("time", time);
-  this.set("statePower", smoothstep(0.8, 0.0, time-vars.boom));
+  var t = getAbsoluteTime();
+  var gt = getGameTime(t);
+  audio.update(t, gt);
+  this.set("time", gt);
+  this.sync("frequencyData");
 }
 
 window.main = function (frag) {
   var overlay = document.getElementById("overlay");
   var message = document.getElementById("message");
+  var canvas = document.getElementById("viewport");
+  var dpr = window.devicePixelRatio || 1;
+  var w = canvas.width;
+  var h = canvas.height;
+  canvas.width = dpr * w;
+  canvas.height = dpr * h;
+  canvas.style.width = w + "px";
+  canvas.style.height = h + "px";
   var glsl = Glsl({
-    canvas: document.getElementById("viewport"),
+    canvas: canvas,
     fragment: frag,
     variables: vars,
-    init: init,
     update: update
   });
   set = function (key, value) {
     glsl.set(key, value);
   };
   var stopAt = null;
+  var end = false;
   function start () {
+    if (end) return;
     overlay.className = "";
     audio.start();
     glsl.start();
@@ -203,6 +328,7 @@ window.main = function (frag) {
     }
   }
   function stop () {
+    if (end) return;
     message.innerHTML = "Game Paused";
     overlay.className = "visible";
     overlay.style.opacity = 0.5;
@@ -215,13 +341,20 @@ window.main = function (frag) {
     }
   }
 
+  E.sub("gameover", function (score) {
+    end = true;
+    message.innerHTML = "Game Over";
+    overlay.className = "visible over";
+    setTimeout(stop, 1000);
+  });
+
   // Events
   var spaceIsDown = false;
   function onkeyup (e) {
     if (e.which === 32) {
       e.preventDefault();
       if (spaceIsDown)
-        spaceup();
+        !end && spaceup();
       spaceIsDown = false;
     }
   }
@@ -229,7 +362,7 @@ window.main = function (frag) {
     if (e.which === 32) {
       e.preventDefault();
       if (!spaceIsDown)
-        spacedown();
+        !end && spacedown();
       spaceIsDown = true;
     }
   }
@@ -249,7 +382,7 @@ window.main = function (frag) {
     var touch = e.changedTouches[0];
     identifier = touch.identifier;
     spaceIsDown = true;
-    spacedown();
+    !end && spacedown();
   }
   function ontouchend (e) {
     if (identifier === null) return;
@@ -257,7 +390,7 @@ window.main = function (frag) {
     if (!touch) return;
     identifier = null;
     spaceIsDown = false;
-    spaceup();
+    !end && spaceup();
   }
   function ontouchcancel (e) {
     if (identifier === null) return;
@@ -265,7 +398,7 @@ window.main = function (frag) {
     if (!touch) return;
     identifier = null;
     spaceIsDown = false;
-    spaceup();
+    !end && spaceup();
   }
   document.addEventListener("touchstart", ontouchstart);
   document.addEventListener("touchend", ontouchend);
@@ -274,6 +407,7 @@ window.main = function (frag) {
   window.onblur = stop;
   window.onfocus = start;
 
+  init();
   start();
 };
 }());

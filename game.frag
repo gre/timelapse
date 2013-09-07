@@ -2,15 +2,20 @@
 precision mediump float;
 #endif
 
+#define FREQUENCY_DATA_SIZE 32
+
+uniform float frequencyData[FREQUENCY_DATA_SIZE];
+
 uniform vec2 resolution;
 uniform float time;
 uniform float boom;
 uniform float boomSpeed;
 uniform float bpm;
 
+uniform float useraction;
 uniform float successState;
-uniform float statePower;
 
+uniform bool fullPulse;
 uniform float glitch;
 
 const vec2 center = vec2(0.5, 0.5);
@@ -38,21 +43,39 @@ float distanceRadius (float a, float b) {
   return d < PI ? d : PI_x_2 - d;
 }
 
+float spiralDistance (vec2 v, float r) {
+  float d = length(v);
+  float a = (PI + atan(v.x, v.y))/PI_x_2;
+  return distance(1.0, 2.0 * smoothstep(0.0, 1.0, fract(log(d/r)+a)));
+}
+
 float circlePulse (
-  vec2 p, float r, float thin, float pulseAngle,
+  vec2 v, float boomForce,
+  float boomGlitchFreq, float boomGlitchAmp,
+  float thin, float pulseAngle, bool fullPulse,
   float waveFreq, float waveAmp, float waveDuration,
   float bullForce
 ) {
-  vec2 v = p - center;
   float angle = atan(-v.x, -v.y);
   float clock = distanceRadius(0.0, angle) / PI;
   float distAngle = distanceRadius(angle, PI_x_2 * pulseAngle) / PI;
+  float f = mix(1.0, smoothstep(-1.0, 1.0, cos(boomGlitchFreq * (clock+0.1*angle+boomForce))), boomGlitchAmp);
+  float r = mix(0.35, 0.2, boomForce*f);
   float sc = smoothstep(1.0-waveDuration, 1.0, distAngle);
   float intensity = 0.1+0.05*sc;
   r /= mix(0.95, 1.0, waveAmp*sc*cos(angle*waveFreq));
-  float ring = abs(length(v)-r) - 0.03*bullForce*smoothstep(1.0-1.5*waveDuration, 1.0, clock);
+  float ring = abs(length(v)-r) - 0.03*bullForce*(!fullPulse ? smoothstep(1.0-1.5*waveDuration, 1.0, clock) : 1.0);
   float value = smoothstep(0.0, intensity, ring);
-  return 1.0/sqrt(abs(value))/1.0 * pow(thin, 2.);
+  float returnValue = 1.0/sqrt(abs(value))/1.0 * pow(thin, 2.);
+  if ( length(v) < r) {
+    float s = spiralDistance(
+      v,
+      PI
+    );
+    s = 1.0 - pow(smoothstep(0.0, 0.3, s), 0.3);
+    returnValue += s;
+  }
+  return returnValue;
 }
 
 float bpmToSec (float bpm) {
@@ -63,11 +86,15 @@ void main (void) {
   vec3 c = vec3(0.0);
   vec2 p = gl_FragCoord.xy / resolution;
   float sec = bpmToSec(bpm);
+  float statePower = smoothstep(0.8, 0.0, time-useraction);
   float cPulse = circlePulse(
-    p, 
-    mix(0.2, 0.35, smoothstep(0.0, boomSpeed, time-boom)),
-    0.5 + smoothstep(0.5, 1.0, statePower)*(1.-distance(p, vec2(0.5, 0.5))),
+    p - center,
+    smoothstep(boomSpeed, 0.0, time-boom),
+    20.0,
+    0.5,
+    0.5 + 0.5 * smoothstep(smoothstep(0.6, 1.0, statePower), 0.0, distance(smoothstep(0.8, 1.0, statePower), distance(p, center))),
     mod((time-boom)/sec, 1.0),
+    fullPulse,
     1.2*sqrt(bpm) + 4.0*statePower,
     2.0,
     min(0.5, bpm / 800.0),
@@ -83,6 +110,14 @@ void main (void) {
   if (glitch != 0.0) {
     c += glitch * 0.5 * cPulse * (0.5 * random(p + time) + 0.5 * random(floor(p * 100.) + time));
   }
+
+/*
+  for (int x = 0; x < FREQUENCY_DATA_SIZE; ++x) {
+    if (x == int(2.0 * distance(p.x, 0.5) * float(FREQUENCY_DATA_SIZE))) {
+      c -= 0.1*vec3(10.0*p.y < smoothstep(-150.0, 0.0, frequencyData[x]) ? 1.0 : 0.0);
+    }
+  }
+  */
 
   gl_FragColor = vec4(c, 1.0);
 }
