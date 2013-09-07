@@ -75,8 +75,8 @@ var audio = (function() {
     this.out = this.filter = filter;
   }
 
-  var bass = new Bass(80, 0.01, 0.2, 0.2);
-  bass.osc.type = "sine";
+  var bass = new Bass(200, 0.01, 0.2, 0.2);
+  bass.osc.type = "square";
   bass.out.connect(out);
 
   var osc = new OscGain();
@@ -108,9 +108,14 @@ var audio = (function() {
   noise.gain.gain.value = 0.4;
   noise.out.connect(out);
 
+  function update (time) {
+
+  }
+
   return {
     ctx: ctx,
     bass: bass,
+    update: update,
     start: function () {
       out.gain.value = 1;
     },
@@ -126,32 +131,70 @@ var vars = {
 };
 
 var lastBoomTime = audio.ctx.currentTime;
-// FIXME real sequencer
-var i = 0;
-setInterval(function () {
-  audio.bass.trigger(lastBoomTime = audio.ctx.currentTime);
-  ++ i;
-}, 1000);
 
+function spaceup () {
+}
+
+function spacedown () {
+  audio.bass.trigger(lastBoomTime = audio.ctx.currentTime);
+}
 
 function init () {
   audio.start();
 }
 
-function update (time, delta) {
-  var dt = time - audio.ctx.currentTime;
+function update () {
+  var time = audio.ctx.currentTime;
+  audio.update(time);
   this.set("time", time);
-  this.set("boom", time - lastBoomTime + dt);
+  this.set("boom", lastBoomTime);
 }
 
 window.main = function (frag) {
-    var glsl = Glsl({
+  var overlay = document.getElementById("overlay");
+  var message = document.getElementById("message");
+  var glsl = Glsl({
     canvas: document.getElementById("viewport"),
     fragment: frag,
     variables: vars,
     init: init,
     update: update
   });
-  glsl.start();
+  var spaceIsDown = false;
+  function onkeyup (e) {
+    if (e.which === 32) {
+      e.preventDefault();
+      spaceup();
+      spaceIsDown = false;
+    }
+  }
+  function onkeydown (e) {
+    if (e.which === 32) {
+      e.preventDefault();
+      spacedown();
+      spaceIsDown = true;
+    }
+  }
+  function start () {
+    overlay.className = "";
+    audio.start();
+    glsl.start();
+  }
+  function stop () {
+    message.innerHTML = "Game Paused";
+    overlay.className = "visible";
+    overlay.style.opacity = 0.5;
+    audio.stop();
+    glsl.stop();
+    if (spaceIsDown) {
+      spaceup();
+      spaceIsDown = false;
+    }
+  }
+  window.onblur = stop;
+  window.onfocus = start;
+  document.addEventListener("keyup", onkeyup);
+  document.addEventListener("keydown", onkeydown);
+  start();
 };
 }());

@@ -14,6 +14,6 @@ float circle (vec2 p, float r, float h) {
 void main (void) {
   vec2 p = gl_FragCoord.xy / resolution;
   gl_FragColor = circle(p, 
-  mix(0.75, 0.9, smoothstep(100., 1000., mod(time-boom, 1000.0)))
+  mix(0.75, 0.9, smoothstep(0.1, 0.5, time-boom))
   ,  1.2*(1.-distance(vec2(0.5, 0.5), p))) * vec4(0.1, 0.2, 0.7, 1.0);
 }
