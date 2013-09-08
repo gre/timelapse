@@ -89,7 +89,7 @@ void main (void) {
   vec3 c = vec3(0.0);
   vec2 p = gl_FragCoord.xy / resolution;
   float sec = bpmToSec(bpm);
-  float statePower = smoothstep(0.8, 0.0, time-useraction);
+  float statePower = smoothstep(0.8, 0.0, time-kick);
   float cPulse = circlePulse(
     p - center,
     smoothstep(kickSpeed, 0.0, time-kick),

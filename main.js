@@ -157,14 +157,15 @@ var audio = (function() {
     }
   };
 
-  function Snare () {
+  function Snare (volume, freqFrom, freqTo) {
     var noise = new Noise();
-    noise.filter.frequency.value = 1000;
     noise.filter.Q.value = 2;
     noise.gain.gain.value = 0;
     this.noise = noise;
     this.out = noise.out;
-    this.volume = 0.8;
+    this.volume = 1 || volume;
+    this.freqFrom = freqFrom || 800;
+    this.freqTo = freqTo || 1000;
   }
 
   Snare.prototype = {
@@ -172,12 +173,12 @@ var audio = (function() {
       this.noise.start(time, 1);
       envelope(this.noise.gain, time, this.volume, 0.05, 
           0.01, 0.03, 0.3, 0.5);
-      this.noise.filter.frequency.setValueAtTime(800, time);
-      this.noise.filter.frequency.linearRampToValueAtTime(1000, time+0.05);
+      this.noise.filter.frequency.setValueAtTime(this.freqFrom, time);
+      this.noise.filter.frequency.linearRampToValueAtTime(this.freqTo, time+0.1);
     }
   };
 
-  function HiHat (duration) {
+  function HiHat (volume, duration) {
     var hihat = new Noise();
     hihat.filter.type = "highpass";
     hihat.filter.frequency.value = 15000;
@@ -185,13 +186,14 @@ var audio = (function() {
     hihat.gain.gain.value = 0;
     this.hihat = hihat;
     this.out = this.hihat.out;
+    this.volume = volume || 1;
     this.duration = duration||0;
   }
 
   HiHat.prototype = {
     trigger: function (time) {
       this.hihat.start(time, 1);
-      envelope(this.hihat.gain, time, 0.2, this.duration, 
+      envelope(this.hihat.gain, time, this.volume, this.duration, 
           0.01, 0.015, 0.2, this.duration);
     }
   };
@@ -225,41 +227,67 @@ var audio = (function() {
     }
   };
 
-  // Sounds!
-  var filter = ctx.createBiquadFilter();
-  filter.frequency.value = 22010;
+ function WaveShaper (amount, n_samples) {
+   // From https://github.com/janesconference/MorningStar
+   var waveShaper = ctx.createWaveShaper();
+   var curve = new Float32Array(n_samples);
+   if ((amount >= 0) && (amount < 1)) {
+     var k = 2 * amount / (1 - amount);
+     for (var i = 0; i < n_samples; i+=1) {
+       var x = (i - 0) * (1 - (-1)) / (n_samples - 0) + (-1);
+       curve[i] = (1 + k) * x / (1+ k * Math.abs(x));
+     }
+   }
+   waveShaper.curve = curve;
+   this.out = this.inp = waveShaper;
+  }
 
+  // Sounds!
   var out = ctx.createGainNode();
   var outCompressor = ctx.createDynamicsCompressor();
-  var reverb = new Reverb(1);
+
+  var reverb = new Reverb(0.5);
   out.gain.value = 0;
-  out.connect(filter);
-  filter.connect(reverb.inp);
+  out.connect(reverb.inp);
   reverb.out.connect(outCompressor);
   outCompressor.connect(ctx.destination);
 
   var bass = new FM();
   bass.osc.type = "sine";
-  bass.gain.gain.value = 0.5;
+  bass.gain.gain.value = 0.3;
   bass.out.connect(out);
   bass.start(0);
 
-  filter.frequency.value = 20000;
-  filter.Q.value = 0;
-
+  var bpmOsc2mult = 2;
   var osc2 = new OscGain();
-  osc2.osc.frequency.value = 150;
+  osc2.osc.frequency.value = vars.bpm * bpmOsc2mult;
   osc2.osc.detune.value = 5;
   osc2.gain.gain.value = 0.2;
   osc2.out.connect(out);
   osc2.start(0);
+  E.sub("bpmChange", function (percent) {
+    var t = ctx.currentTime;
+    osc2.osc.detune.setValueAtTime(-1000*percent, t);
+    osc2.osc.detune.linearRampToValueAtTime(0, t+0.2);
+    osc2.osc.frequency.setValueAtTime(bpmOsc2mult * vars.bpm, t);
+    osc2.osc.frequency.setValueAtTime(bpmOsc2mult * vars.bpm, t + getKickInterval());
+  });
 
   var noise = new Noise();
   noise.filter.frequency.value = 180;
   noise.filter.Q.value = 10;
-  noise.gain.gain.value = 0.05;
+  noise.gain.gain.value = 0;
   noise.out.connect(out);
   noise.start(0);
+
+  /*
+  var noise2 = new Noise();
+  noise2.filter.frequency.value = 300;
+  noise2.filter.Q.value = 10;
+  noise2.gain.gain.value = 1;
+  noise2.out.connect(waveShaper);
+  noise2.start(0);
+  */
 
   var melo1, melo2, bassMelo;
 
@@ -322,7 +350,7 @@ var audio = (function() {
     }
 
     if (hasHiHat) {
-      var hihat = new HiHat(0.02*vars.bpm/100);
+      var hihat = new HiHat(0.2, 0.02*vars.bpm/100);
       hihat.out.connect(out);
       setTimeout(function () {
         hihat.out.disconnect(out);
@@ -331,7 +359,7 @@ var audio = (function() {
     }
 
     if (hasSnare) {
-      var snare = new Snare(0.2);
+      var snare = new Snare();
       snare.out.connect(out);
       setTimeout(function () {
         snare.out.disconnect(out);
@@ -340,9 +368,9 @@ var audio = (function() {
     }
 
     var oscFreq = bassMelo[Math.floor(i/4) % 4];
-    bass.osc.frequency.value = oscFreq;
-    bass.mod.gain.gain.value = oscFreq * 0.5+0.5*r;
-    bass.mod.osc.frequency.value = oscFreq * 0.25;
+    bass.osc.frequency.value = oscFreq * 2.0;
+    bass.mod.osc.frequency.value = oscFreq * 0.5;
+    bass.mod.gain.gain.value = oscFreq*0.5 + 0.5*r;
   }
 
   function risk () {
@@ -365,7 +393,8 @@ var audio = (function() {
     }
     //analyser.getFloatFrequencyData(vars.frequencyData);
 
-    noise.gain.gain.value = 0.05+0.9*risk();
+    noise.gain.gain.value = risk();
+    //noise2.gain.gain.value = risk();
     reverb.mix(0.3+0.4*risk());
   }
 
@@ -389,19 +418,28 @@ var audio = (function() {
     getKickInterval: getKickInterval,
     kick: function (t, errorRate) {
       errorRate = errorRate * errorRate * errorRate;
-      var freq = mix(100, 200, errorRate);
-      var speed = mix(0.3, 0.5, errorRate) * 100 / vars.bpm;
+      var freq = mix(100, 120, errorRate);
+      var speed = mix(0.2, 0.3, errorRate) * 100 / vars.bpm;
       var kick = new Kicker(freq, 0.01, speed, speed);
-      kick.osc.type = "square";
+      kick.volume = 2.0;
+      kick.osc.type = "sine";
       var filter = ctx.createBiquadFilter();
       filter.frequency.value = mix(200, 300, errorRate);
-      filter.Q.value = 10 * errorRate;
+      filter.Q.value = 10 + 10 * errorRate;
       kick.out.connect(filter);
       filter.connect(out);
       setTimeout(function () {
         filter.disconnect(out);
       }, 1000);
       kick.trigger(t);
+
+      var snare = new Snare(0.5, 800, 10);
+      snare.out.connect(out);
+      setTimeout(function () {
+        snare.out.disconnect(out);
+      }, 1000);
+      snare.trigger(t);
+
       E.pub("kick", t);
     },
     start: function () {
@@ -463,15 +501,19 @@ function action () {
 
   var bpm = vars.bpm;
   if (percentDelta < INF) {
+    E.pub("bpmChange", -0.2);
     bpm *= 0.8;
     successState = 0;
   }
   else if (percentDelta > SUP) {
+    E.pub("bpmChange", -0.2);
     bpm *= 0.8;
     successState = 0;
   }
   else {
-    bpm = bpm - (0.5 * bpm * percentDelta);
+    var decrease = (0.5 * bpm * percentDelta);
+    bpm = bpm - decrease;
+    E.pub("bpmChange", -decrease);
     successState = percentDelta < 0 ?
       Math.max(0, 1-percentDelta/INF) :
       Math.max(0, 1-percentDelta/SUP) ;
