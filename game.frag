@@ -2,6 +2,8 @@
 precision mediump float;
 #endif
 
+#define BPM_MIN 30.0
+#define BPM_MAX 200.0
 #define FREQUENCY_DATA_SIZE 32
 
 uniform float frequencyData[FREQUENCY_DATA_SIZE];
@@ -26,6 +28,10 @@ const float PI_x_2 = 6.28318530718;
 const vec3 COLOR_NEUTRAL = vec3(0.1, 0.2, 0.7);
 const vec3 COLOR_SUCCESS = vec3(0.0, 0.7, 0.1);
 const vec3 COLOR_ERROR = vec3(0.7, 0.0, 0.05);
+
+float expInOut (float a) {
+  return 0.0==a ? 0.0 : 1.0==a ? 1.0 : 1.0 > (a *= 2.0) ? 0.5 * pow(1024.0,a-1.0):0.5*(-pow(2.0,-10.0*(a-1.0))+2.0);
+}
 
 float random (vec2 pos) {
   return fract(sin(dot(pos.xy ,vec2(12.9898,78.233))) * 43758.5453);
@@ -118,6 +124,18 @@ void main (void) {
     }
   }
   */
+
+  c = clamp(
+    c,
+    vec3(0.0, 0.0, 0.0),
+    vec3(1.0, 1.0, 1.0)
+  );
+
+  c += 0.05;
+
+  float bpmLight = smoothstep(BPM_MIN, BPM_MAX, bpm);
+  c *= max(0.1, min(1.0, 200.0*bpmLight));
+  c *= max(0.95, 800.0*(bpmLight-0.98));
 
   gl_FragColor = vec4(c, 1.0);
 }
