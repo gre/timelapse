@@ -24,7 +24,6 @@ body {
   display: none;
 }
 #overlay.over {
-  opacity: 0.9;
 }
 #overlay.visible {
   display: block;

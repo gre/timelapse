@@ -1,7 +1,7 @@
 (function () {
 
 var BPM_MIN = 30;
-var BPM_MAX = 200;
+var BPM_MAX = 150;
 
 var glsl; // Will be implemented
 var end = false;
@@ -14,8 +14,7 @@ var vars = {
   bpm: 50,
   successState: 0.0, 
   fullPulse: false,
-  glitch: 0.0,
-  frequencyData: new Float32Array(32)
+  glitch: 0.0
 };
 
 var E = (function(_){return{pub:function(a,b,c,d){for(d=-1,c=[].concat(_[a]);c[++d];)c[d](b)},sub:function(a,b){(_[a]||(_[a]=[])).push(b)}}})({});
@@ -49,21 +48,7 @@ var NOTES = (function () {
 
 var audio = (function() {
   var ctx = new (window.AudioContext || window.webkitAudioContext)();
-  var filter = ctx.createBiquadFilter();
-  filter.frequency.value = 22010;
-
-  var out = ctx.createGainNode();
-  var outCompressor = ctx.createDynamicsCompressor();
-  out.gain.value = 0;
-  out.connect(filter);
-  filter.connect(outCompressor);
-  outCompressor.connect(ctx.destination);
-  var analyser = ctx.createAnalyser();
-  analyser.fftSize = vars.frequencyData.length * 2;
-  analyser.getFloatFrequencyData(vars.frequencyData);
-  outCompressor.connect(analyser);
-
-  
+ 
   function envelope (gainNode, time, volume, duration, a, d, s, r) {
     gainNode.gain.cancelScheduledValues(0);
     gainNode.gain.setValueAtTime(0, time);
@@ -75,18 +60,76 @@ var audio = (function() {
 
   function OscGain () {
     this.osc = ctx.createOscillator();
-    this.osc.start(0);
     this.out = this.gain = ctx.createGainNode();
     this.osc.connect(this.gain);
   }
+  OscGain.prototype = {
+    start: function (time, duration) {
+      this.osc.start(time, 0, duration);
+    }
+  };
 
   function FM () {
     OscGain.call(this);
     this.mod = new OscGain();
     this.mod.out.connect(this.osc.frequency);
   }
+  FM.prototype = {
+    start: function (time, duration) {
+      this.osc.start(time, 0, duration);
+      this.mod.start(time, duration);
+    }
+  };
 
-  function Bass (freq, attack, duration, fall) {
+  function Reverb (time) { // TODO
+    var input = ctx.createGain();
+    var output = ctx.createGain();
+    var drygain = ctx.createGain();
+    var wetgain = ctx.createGain();
+
+    var verb = ctx.createConvolver();
+    verb.connect(wetgain);
+
+    input.connect(verb);
+    input.connect(drygain);
+
+    drygain.connect(output);
+    wetgain.connect(output);
+    
+    function buildImpulse (time) {
+          // FIXME: need the audio context to rebuild the buffer.
+       var rate = ctx.sampleRate,
+          length = rate * time,
+          reverse = false,
+          decay = 2,
+          impulse = ctx.createBuffer(2, length, rate),
+          impulseL = impulse.getChannelData(0),
+          impulseR = impulse.getChannelData(1);
+      for (var i = 0; i < length; i++) {
+        var n = reverse ? length - i : i;
+        impulseL[i] = (Math.random() * 2 - 1) * Math.pow(1 - n / length, decay);
+        impulseR[i] = (Math.random() * 2 - 1) * Math.pow(1 - n / length, decay);
+      }
+      verb.buffer = impulse;
+    }
+
+    this.dry = drygain;
+    this.wet = wetgain;
+    this.inp = input;
+    this.out = output;
+
+    buildImpulse(time||1);
+    this.mix(0);
+  };
+
+  Reverb.prototype = {
+    mix: function (m) {
+      this.wet.gain.value = m;
+      this.dry.gain.value = 1-m;
+    }
+  };
+
+  function Kicker (freq, attack, duration, fall) {
     OscGain.call(this);
     this.gain.gain.value = 0;
     this.osc.frequency.value = freq;
@@ -97,12 +140,35 @@ var audio = (function() {
     this.volume = 1.0;
   }
 
-  Bass.prototype = {
+  Kicker.prototype = {
+    start: function (time, duration) {
+      this.osc.start(time, 0, duration);
+    },
     trigger: function (time) {
       var a = this.attack, d = this.attack + 0.06, s = 0.8, r = 0.1;
+      this.start(time, this.duration + 1);
       envelope(this.gain, time, this.volume, this.duration, a, d, s, r);
       this.osc.frequency.setValueAtTime(this.freq, time);
       this.osc.frequency.linearRampToValueAtTime(0, time + this.fall);
+    }
+  };
+
+  function HiHat (duration) {
+    var hihat = new Noise();
+    hihat.filter.type = "highpass";
+    hihat.filter.frequency.value = 15000;
+    hihat.filter.Q.value = 10;
+    hihat.gain.gain.value = 0;
+    hihat.out.connect(out);
+    this.hihat = hihat;
+    this.duration = duration||0;
+  }
+
+  HiHat.prototype = {
+    trigger: function (time) {
+      this.hihat.start(time, 1);
+      envelope(this.hihat.gain, time, 0.2, this.duration, 
+          0.01, 0.015, 0.2, this.duration);
     }
   };
 
@@ -116,7 +182,6 @@ var audio = (function() {
     var whiteNoise = ctx.createBufferSource();
     whiteNoise.buffer = noiseBuffer;
     whiteNoise.loop = true;
-    whiteNoise.start(0);
 
     var gain = ctx.createGainNode();
     whiteNoise.connect(gain);
@@ -130,10 +195,30 @@ var audio = (function() {
     this.out = this.filter = filter;
   }
 
-  var osc = new FM();
-  osc.osc.type = "sine";
-  osc.gain.gain.value = 0.5;
-  osc.out.connect(out);
+  Noise.prototype = {
+    start: function (time, duration) {
+      this.white.start(time, 0, duration);
+    }
+  };
+
+  // Sounds!
+  var filter = ctx.createBiquadFilter();
+  filter.frequency.value = 22010;
+
+  var out = ctx.createGainNode();
+  var outCompressor = ctx.createDynamicsCompressor();
+  var reverb = new Reverb(1);
+  out.gain.value = 0;
+  out.connect(filter);
+  filter.connect(reverb.inp);
+  reverb.out.connect(outCompressor);
+  outCompressor.connect(ctx.destination);
+
+  var bass = new FM();
+  bass.osc.type = "sine";
+  bass.gain.gain.value = 0.5;
+  bass.out.connect(out);
+  bass.start(0);
 
   filter.frequency.value = 20000;
   filter.Q.value = 0;
@@ -141,31 +226,71 @@ var audio = (function() {
   var osc2 = new OscGain();
   osc2.osc.frequency.value = 150;
   osc2.osc.detune.value = 5;
-  osc2.gain.gain.value = 0.//2;
+  osc2.gain.gain.value = 0.2;
   osc2.out.connect(out);
+  osc2.start(0);
 
+  /*
   var osc3 = new OscGain();
-  osc3.osc.type = "sawtooth";
-  osc3.osc.frequency.value = 300;
-  osc3.gain.gain.value = 0.0//5;
+  osc3.osc.type = "triangle";
+  osc3.osc.frequency.value = 1000;
+  osc3.gain.gain.value = 0.1;
+  osc3.out.connect(out);
+  osc3.start(0);
+  */
 
   var noise = new Noise();
   noise.filter.frequency.value = 180;
   noise.filter.Q.value = 10;
   noise.gain.gain.value = 0.05;
   noise.out.connect(out);
+  noise.start(0);
 
-  var smallMelo;
+
+  var melo1, melo2, bassMelo;
+
   with (NOTES) {
-    smallMelo = [
-      G4,
-      D4,
-      F4,
-      C4
-    ];
+    melo1 = [E3,G3,D3,G3,E3,A3,C3,G3];
+    melo2 = [E3,B3,D3,G3,E3,C4,C3,D3];
+    bassMelo = [G4,D4,F4,C4];
   }
-  N=NOTES;
 
+  var DELTAS = [
+    Math.pow(2, 0),
+    Math.pow(2, 1),
+    Math.pow(2, 2)
+  ];
+
+  function applyArpeggio (freqParam, baseFreq, time, duration, arpDuration, deltas) {
+    if (!deltas) deltas = DELTAS;
+    var length = deltas.length;
+    var ranges = [];
+    for (var t = 0, i = 0; t <= duration; t += arpDuration, i = (i+1) % length) {
+      freqParam.setValueAtTime(baseFreq * deltas[i], time + t);
+    }
+  }
+
+  function meloNote (noteFreq, time, arpeggio, metallic) {
+    var fm = new FM();
+    var duration = 0.3;
+    var release = 0.1;
+    fm.osc.type = "triangle";
+    fm.osc.frequency.value = 4 * noteFreq;
+    fm.mod.osc.frequency.value = 3 * noteFreq;
+    fm.mod.osc.type = "sine";
+    fm.out.connect(out);
+    fm.start(time, 0, 1);
+    arpeggio && applyArpeggio(fm.osc.frequency, 4 * noteFreq, time, duration+release, 0.025);
+    envelope(fm.gain, time, 0.5, duration, 
+        0.01, 0.02, 0.6, 0.2);
+    envelope(fm.mod.gain, time, 4 * noteFreq * metallic, duration, 
+        0.05, 0.1, 0.6, 0.2);
+  }
+
+  function meloPart (i, time) {
+
+  }
+  
   function tick (i, time) {
     E.pub("tick", i);
     /*
@@ -183,29 +308,34 @@ var audio = (function() {
       E.pub("boom");
     }
     */
-    hihat(time);
-    var oscFreq = smallMelo[Math.floor(i/4) % 4];
-    osc.osc.frequency.value = oscFreq;
-    osc.mod.gain.gain.value = oscFreq * 0.5+0.5*risk();
-    osc.mod.osc.frequency.value = oscFreq * 0.25;
-  }
+    var r = risk();
 
+    var hasMelo = i > 64;
+    var hasHiHat = i > 16;
 
-  function hihat (time) {
-    var hihat = new Noise();
-    hihat.filter.type = "highpass";
-    hihat.filter.frequency.value = 15000;
-    hihat.filter.Q.value = 10;
-    hihat.gain.gain.value = 0;
-    hihat.out.connect(out);
-    // (gainNode, time, volume, duration, a, d, s, r)
-    envelope(hihat.gain, time, 0.2, 0.02*vars.bpm/100, 
-        0.01, 0.015, 0.2, 0.02*vars.bpm/100);
+    if (hasMelo) {
+      var metallic = 0.5 * r + 0.5 * smoothstep(-1, 1, Math.cos(Math.PI * i / 64));
+      var arpeggio = i % 64 >= 32;
+      var melo = i % 16 < 8 ? melo1 : melo2;
+      var octave = i % 32 < 16 ? 0 : 1;
+      var m = melo[i % 8] * (1 << octave);
+      meloNote(m, time, arpeggio, metallic);
+    }
+
+    if (hasHiHat) {
+      var hihat = new HiHat(0.02*vars.bpm/100);
+      hihat.trigger(time);
+    }
+
+    var oscFreq = bassMelo[Math.floor(i/4) % 4];
+    bass.osc.frequency.value = oscFreq;
+    bass.mod.gain.gain.value = oscFreq * 0.5+0.5*r;
+    bass.mod.osc.frequency.value = oscFreq * 0.25;
   }
 
   function risk () {
-    return smoothstep(BPM_MIN+20, BPM_MIN, vars.bpm) +
-      smoothstep(BPM_MAX-40, BPM_MAX, vars.bpm);
+    return smoothstep(BPM_MIN*1.2, BPM_MIN, vars.bpm) +
+      smoothstep(BPM_MAX*0.8, BPM_MAX, vars.bpm);
   }
 
   var ticksPerBeat = 4;
@@ -221,40 +351,41 @@ var audio = (function() {
       lastTickTime = nextTickTime;
       tick(currentTick, audioTickTime);
     }
-    analyser.getFloatFrequencyData(vars.frequencyData);
+    //analyser.getFloatFrequencyData(vars.frequencyData);
 
-    noise.gain.gain.value = 0.05+0.5*risk();
+    noise.gain.gain.value = 0.05+0.9*risk();
+    reverb.mix(0.3+0.4*risk());
   }
 
   function getTickTime () {
     return 60 / (ticksPerBeat * vars.bpm);
   }
 
-  function getCurrentBassTime () {
+  function getCurrentKickTime () {
     return lastTickTime - getTickTime() * (currentTick % 4);
   }
 
-  function getBassInterval () {
+  function getKickInterval () {
     return 4 * getTickTime();
   }
 
   return {
     ctx: ctx,
     update: update,
-    getCurrentBassTime: getCurrentBassTime,
-    getBassInterval: getBassInterval,
-    triggerBass: function (t, errorRate) {
+    getCurrentKickTime: getCurrentKickTime,
+    getKickInterval: getKickInterval,
+    kick: function (t, errorRate) {
       errorRate = errorRate * errorRate * errorRate;
       var freq = mix(100, 200, errorRate);
       var speed = mix(0.3, 0.5, errorRate) * 100 / vars.bpm;
-      var bass = new Bass(freq, 0.01, speed, speed);
-      bass.osc.type = "square";
+      var kick = new Kicker(freq, 0.01, speed, speed);
+      kick.osc.type = "square";
       var filter = ctx.createBiquadFilter();
       filter.frequency.value = mix(100, 300, errorRate);
       filter.Q.value = 10 * errorRate;
-      bass.out.connect(filter);
+      kick.out.connect(filter);
       filter.connect(out);
-      bass.trigger(t);
+      kick.trigger(t);
       E.pub("boom", t);
     },
     start: function () {
@@ -262,6 +393,11 @@ var audio = (function() {
     },
     stop: function () {
       out.gain.value = 0;
+    },
+    fadeOut: function (duration) {
+      var t = ctx.currentTime;
+      out.gain.setValueAtTime(1, t);
+      out.gain.linearRampToValueAtTime(0, t+duration);
     }
   };
 }());
@@ -275,17 +411,17 @@ function getGameTime (t) {
   return (t||getAbsoluteTime()) - pauseDuration; 
 }
 
-function getBassPercent () {
+function getKickPercent () {
   // FIXME: need to be clean...
   var gt = getGameTime();
-  var currentBassTime = audio.getCurrentBassTime();
-  var bassTime = audio.getBassInterval();
+  var currentKickTime = audio.getCurrentKickTime();
+  var kickTime = audio.getKickInterval();
 
-  var d = gt - currentBassTime;
-  var delta = d - bassTime;
-  if (delta < -bassTime/2) delta += bassTime;
+  var d = gt - currentKickTime;
+  var delta = d - kickTime;
+  if (delta < -kickTime/2) delta += kickTime;
 
-  var percentDelta = 2 * delta / bassTime;
+  var percentDelta = 2 * delta / kickTime;
   return percentDelta;
 }
 
@@ -295,7 +431,7 @@ var SUP = 0.3;
 var lastAction = 0;
 function action () {
   var gt = getGameTime();
-  var percentDelta = getBassPercent();
+  var percentDelta = getKickPercent();
   var absDelta = Math.abs(percentDelta);
 
   var successState = 0;
@@ -317,7 +453,7 @@ function action () {
   }
   bpm = Math.min(200, bpm);
 
-  audio.triggerBass(getAbsoluteTime(), 1-successState);
+  audio.kick(getAbsoluteTime(), 1-successState);
 
   glsl.set("successState", successState);
   glsl.set("bpm", bpm);
@@ -341,7 +477,7 @@ function init () {
     // TODO
   });
   audio.start();
-  audio.triggerBass(audio.ctx.currentTime, 0);
+  audio.kick(audio.ctx.currentTime, 0);
 }
 
 function update () {
@@ -350,15 +486,14 @@ function update () {
   var gt = getGameTime(t);
   audio.update(t, gt);
   this.set("time", gt);
-  this.sync("frequencyData");
 
   if (end) return;
-  var bassPercent = getBassPercent();
-  var currentBassTime = audio.getCurrentBassTime();
-  var bassTime = audio.getBassInterval();
+  var kickPercent = getKickPercent();
+  var currentKickTime = audio.getCurrentKickTime();
+  var kickTime = audio.getKickInterval();
 
-  //console.log(currentBassTime, vars.boom);
-  if (gt > vars.boom+bassTime+bassTime*SUP) {
+  //console.log(currentKickTime, vars.boom);
+  if (gt > vars.boom+kickTime+kickTime*SUP) {
     action();
   }
 
@@ -413,6 +548,7 @@ window.main = function (frag) {
     message.innerHTML = "Game Over";
     overlay.className = "visible over";
     setTimeout(stop, 1000);
+    audio.fadeOut(5);
   });
 
   // Events
