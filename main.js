@@ -1,9 +1,13 @@
 (function () {
+var overlay = document.getElementById("overlay");
+var message = document.getElementById("message");
 
 var BPM_MIN = 30;
 var BPM_MAX = 150;
 
 var glsl; // Will be implemented
+
+var introTime = 4.5;
 var end = false;
 
 var vars = {
@@ -153,14 +157,37 @@ var audio = (function() {
     }
   };
 
+  function Snare () {
+    var noise = new Noise();
+    noise.filter.frequency.value = 1000;
+    noise.filter.Q.value = 0;
+    noise.gain.gain.value = 0;
+    this.noise = noise;
+    this.out = noise.out;
+    this.volume = 0.8;
+  }
+
+  Snare.prototype = {
+    trigger: function (time) {
+      this.noise.start(time, 1);
+      envelope(this.noise.gain, time, this.volume, 0.05, 
+          0.01, 0.03, 0.3, 0.5);
+      /*
+      this.noise.filter.frequency.setValueAtTime(5000, time);
+      this.noise.filter.frequency.linearRampToValueAtTime(2000, time+0.3);
+      */
+    }
+  };
+
+
   function HiHat (duration) {
     var hihat = new Noise();
     hihat.filter.type = "highpass";
     hihat.filter.frequency.value = 15000;
     hihat.filter.Q.value = 10;
     hihat.gain.gain.value = 0;
-    hihat.out.connect(out);
     this.hihat = hihat;
+    this.out = this.hihat.out;
     this.duration = duration||0;
   }
 
@@ -312,6 +339,7 @@ var audio = (function() {
 
     var hasMelo = i > 64;
     var hasHiHat = i > 16;
+    var hasSnare = i % 4 == 2;
 
     if (hasMelo) {
       var metallic = 0.5 * r + 0.5 * smoothstep(-1, 1, Math.cos(Math.PI * i / 64));
@@ -324,7 +352,14 @@ var audio = (function() {
 
     if (hasHiHat) {
       var hihat = new HiHat(0.02*vars.bpm/100);
+      hihat.out.connect(out);
       hihat.trigger(time);
+    }
+
+    if (hasSnare) {
+      var snare = new Snare(0.2);
+      snare.out.connect(out);
+      snare.trigger(time);
     }
 
     var oscFreq = bassMelo[Math.floor(i/4) % 4];
@@ -389,10 +424,17 @@ var audio = (function() {
       E.pub("boom", t);
     },
     start: function () {
-      out.gain.value = 1;
+      out.gain.cancelScheduledValues(0);
+      out.gain.setValueAtTime(1, ctx.currentTime);
     },
     stop: function () {
-      out.gain.value = 0;
+      out.gain.cancelScheduledValues(0);
+      out.gain.setValueAtTime(0, ctx.currentTime);
+    },
+    fadeIn: function (duration) {
+      var t = ctx.currentTime;
+      out.gain.setValueAtTime(0, t);
+      out.gain.linearRampToValueAtTime(1, t+duration);
     },
     fadeOut: function (duration) {
       var t = ctx.currentTime;
@@ -480,6 +522,27 @@ function init () {
   audio.kick(audio.ctx.currentTime, 0);
 }
 
+var currentI = -1;
+function introMessage (t) {
+  var i = Math.floor(t);
+  if (currentI === i) return;
+  currentI = i;
+  if (i == 0) {
+    overlay.className = "visible intro";
+    message.innerHTML = "Ready?";
+  }
+  else if (i == 4) {
+    overlay.className = "";
+    message.innerHTML = "";
+  }
+  else {
+    if (i == 2) {
+      overlay.className = "visible intro fadeout";
+    }
+    message.innerHTML = ""+(4-i);
+  }
+}
+
 function update () {
   if (!glsl) return;
   var t = getAbsoluteTime();
@@ -493,6 +556,14 @@ function update () {
   var kickTime = audio.getKickInterval();
 
   //console.log(currentKickTime, vars.boom);
+  if (gt < introTime) {
+    introMessage(gt);
+    if (gt > vars.boom+kickTime) {
+      audio.kick(getAbsoluteTime(), 0);
+    }
+    return;
+  }
+  
   if (gt > vars.boom+kickTime+kickTime*SUP) {
     action();
   }
@@ -503,8 +574,6 @@ function update () {
 }
 
 window.main = function (frag) {
-  var overlay = document.getElementById("overlay");
-  var message = document.getElementById("message");
   var canvas = document.getElementById("viewport");
   var dpr = window.devicePixelRatio || 1;
   var w = canvas.width;
@@ -520,10 +589,17 @@ window.main = function (frag) {
     update: update
   });
   var stopAt = null;
+  var firstStart = true;
   function start () {
     if (end) return;
     overlay.className = "";
-    audio.start();
+    if (firstStart) {
+      firstStart = false;
+      audio.fadeIn(2);
+    }
+    else {
+      audio.start();
+    }
     glsl.start();
     if (stopAt !== null) {
       pauseDuration += (audio.ctx.currentTime - stopAt);
