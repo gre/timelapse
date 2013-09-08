@@ -341,6 +341,10 @@ var audio = (function() {
     var hasHiHat = i > 16;
     var hasSnare = i % 4 == 2;
 
+    if (i == 0) {
+      audio.kick(getAbsoluteTime(), 0);
+    }
+
     if (hasMelo) {
       var metallic = 0.5 * r + 0.5 * smoothstep(-1, 1, Math.cos(Math.PI * i / 64));
       var arpeggio = i % 64 >= 32;
@@ -519,7 +523,6 @@ function init () {
     // TODO
   });
   audio.start();
-  audio.kick(audio.ctx.currentTime, 0);
 }
 
 var currentI = -1;
