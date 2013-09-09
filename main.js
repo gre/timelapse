@@ -7,16 +7,16 @@ var BPM_MAX = 150;
 
 var glsl; // Will be implemented
 
-var introTime = 4.5;
+var intro = true;
 var end = false;
 
 var vars = {
   time: 0,
   useraction: 0,
-  boom: 0,
-  boomSpeed: 0.2,
+  kick: 0,
+  kickSpeed: 0.2,
   bpm: 50,
-  successState: 0.0, 
+  successState: 0.0,
   fullPulse: false,
   glitch: 0.0
 };
@@ -160,7 +160,7 @@ var audio = (function() {
   function Snare () {
     var noise = new Noise();
     noise.filter.frequency.value = 1000;
-    noise.filter.Q.value = 0;
+    noise.filter.Q.value = 2;
     noise.gain.gain.value = 0;
     this.noise = noise;
     this.out = noise.out;
@@ -172,13 +172,10 @@ var audio = (function() {
       this.noise.start(time, 1);
       envelope(this.noise.gain, time, this.volume, 0.05, 
           0.01, 0.03, 0.3, 0.5);
-      /*
-      this.noise.filter.frequency.setValueAtTime(5000, time);
-      this.noise.filter.frequency.linearRampToValueAtTime(2000, time+0.3);
-      */
+      this.noise.filter.frequency.setValueAtTime(800, time);
+      this.noise.filter.frequency.linearRampToValueAtTime(1000, time+0.05);
     }
   };
-
 
   function HiHat (duration) {
     var hihat = new Noise();
@@ -257,22 +254,12 @@ var audio = (function() {
   osc2.out.connect(out);
   osc2.start(0);
 
-  /*
-  var osc3 = new OscGain();
-  osc3.osc.type = "triangle";
-  osc3.osc.frequency.value = 1000;
-  osc3.gain.gain.value = 0.1;
-  osc3.out.connect(out);
-  osc3.start(0);
-  */
-
   var noise = new Noise();
   noise.filter.frequency.value = 180;
   noise.filter.Q.value = 10;
   noise.gain.gain.value = 0.05;
   noise.out.connect(out);
   noise.start(0);
-
 
   var melo1, melo2, bassMelo;
 
@@ -306,6 +293,9 @@ var audio = (function() {
     fm.mod.osc.frequency.value = 3 * noteFreq;
     fm.mod.osc.type = "sine";
     fm.out.connect(out);
+    setTimeout(function () {
+      fm.out.disconnect(out);
+    }, 1000);
     fm.start(time, 0, 1);
     arpeggio && applyArpeggio(fm.osc.frequency, 4 * noteFreq, time, duration+release, 0.025);
     envelope(fm.gain, time, 0.5, duration, 
@@ -314,36 +304,13 @@ var audio = (function() {
         0.05, 0.1, 0.6, 0.2);
   }
 
-  function meloPart (i, time) {
-
-  }
-  
   function tick (i, time) {
-    E.pub("tick", i);
-    /*
-    if (i>0 && i % 128 == 0) {
-      set("glitch", 0.1);
-      set("fullPulse", true);
-    }
-    if (i % 128 === 16) {
-      set("glitch", 0);
-      set("fullPulse", false);
-    }
-
-    if (i % 4 === 0) {
-      audio.bass.trigger(time);
-      E.pub("boom");
-    }
-    */
+    E.pub("tick", [i, time]);
     var r = risk();
 
     var hasMelo = i > 64;
     var hasHiHat = i > 16;
     var hasSnare = i % 4 == 2;
-
-    if (i == 0) {
-      audio.kick(getAbsoluteTime(), 0);
-    }
 
     if (hasMelo) {
       var metallic = 0.5 * r + 0.5 * smoothstep(-1, 1, Math.cos(Math.PI * i / 64));
@@ -357,12 +324,18 @@ var audio = (function() {
     if (hasHiHat) {
       var hihat = new HiHat(0.02*vars.bpm/100);
       hihat.out.connect(out);
+      setTimeout(function () {
+        hihat.out.disconnect(out);
+      }, 1000);
       hihat.trigger(time);
     }
 
     if (hasSnare) {
       var snare = new Snare(0.2);
       snare.out.connect(out);
+      setTimeout(function () {
+        snare.out.disconnect(out);
+      }, 1000);
       snare.trigger(time);
     }
 
@@ -382,7 +355,7 @@ var audio = (function() {
   var lastTickTime = -60 / (ticksPerBeat * vars.bpm);
   var currentTick = -1;
   function update (time, gameTime) {
-    var tickTime = getTickTime();
+    var tickTime = getTickSpeed();
     var nextTickTime;
     while ((nextTickTime = lastTickTime + tickTime) < gameTime + scheduleAheadTime) {
       var audioTickTime = nextTickTime + (time - gameTime);
@@ -396,21 +369,22 @@ var audio = (function() {
     reverb.mix(0.3+0.4*risk());
   }
 
-  function getTickTime () {
+  function getTickSpeed () {
     return 60 / (ticksPerBeat * vars.bpm);
   }
 
   function getCurrentKickTime () {
-    return lastTickTime - getTickTime() * (currentTick % 4);
+    return lastTickTime - getTickSpeed() * (currentTick % 4);
   }
 
   function getKickInterval () {
-    return 4 * getTickTime();
+    return 4 * getTickSpeed();
   }
 
   return {
     ctx: ctx,
     update: update,
+    getTickSpeed: getTickSpeed,
     getCurrentKickTime: getCurrentKickTime,
     getKickInterval: getKickInterval,
     kick: function (t, errorRate) {
@@ -420,12 +394,15 @@ var audio = (function() {
       var kick = new Kicker(freq, 0.01, speed, speed);
       kick.osc.type = "square";
       var filter = ctx.createBiquadFilter();
-      filter.frequency.value = mix(100, 300, errorRate);
+      filter.frequency.value = mix(200, 300, errorRate);
       filter.Q.value = 10 * errorRate;
       kick.out.connect(filter);
       filter.connect(out);
+      setTimeout(function () {
+        filter.disconnect(out);
+      }, 1000);
       kick.trigger(t);
-      E.pub("boom", t);
+      E.pub("kick", t);
     },
     start: function () {
       out.gain.cancelScheduledValues(0);
@@ -437,11 +414,13 @@ var audio = (function() {
     },
     fadeIn: function (duration) {
       var t = ctx.currentTime;
+      out.gain.cancelScheduledValues(0);
       out.gain.setValueAtTime(0, t);
       out.gain.linearRampToValueAtTime(1, t+duration);
     },
     fadeOut: function (duration) {
       var t = ctx.currentTime;
+      out.gain.cancelScheduledValues(0);
       out.gain.setValueAtTime(1, t);
       out.gain.linearRampToValueAtTime(0, t+duration);
     }
@@ -515,14 +494,13 @@ function spacedown () {
 }
 
 function init () {
-  E.sub("boom", function (t) {
+  E.sub("kick", function (t) {
     // THIS IS MESSY!
-    glsl.set("boom", t);
+    glsl.set("kick", t);
   });
-  E.sub("tick", function (i) {
-    // TODO
+  E.sub("tick", function (a) {
+    tickUpdate.apply(this, a);
   });
-  audio.start();
 }
 
 var currentI = -1;
@@ -537,12 +515,20 @@ function introMessage (t) {
   else if (i == 4) {
     overlay.className = "";
     message.innerHTML = "";
+    intro = false;
   }
   else {
-    if (i == 2) {
+    if (i == 3) {
       overlay.className = "visible intro fadeout";
     }
     message.innerHTML = ""+(4-i);
+  }
+}
+
+function tickUpdate (tick, time) {
+  if (intro && tick % 4 == 0) {
+    introMessage(Math.floor(tick / 4));
+    audio.kick(time, 0);
   }
 }
 
@@ -558,16 +544,19 @@ function update () {
   var currentKickTime = audio.getCurrentKickTime();
   var kickTime = audio.getKickInterval();
 
-  //console.log(currentKickTime, vars.boom);
+  //console.log(currentKickTime, vars.kick);
+  /*
   if (gt < introTime) {
     introMessage(gt);
-    if (gt > vars.boom+kickTime) {
+    if (gt > vars.kick+kickTime) {
       audio.kick(getAbsoluteTime(), 0);
     }
     return;
   }
+  */
+  if (intro) return;
   
-  if (gt > vars.boom+kickTime+kickTime*SUP) {
+  if (gt > vars.kick+kickTime+kickTime*SUP) {
     action();
   }
 
@@ -613,7 +602,7 @@ window.main = function (frag) {
     if (end) return;
     message.innerHTML = "Game Paused";
     overlay.className = "visible";
-    audio.stop();
+    audio.fadeOut(0.5);
     glsl.stop();
     stopAt = audio.ctx.currentTime;
     if (spaceIsDown) {

@@ -7,8 +7,8 @@ precision mediump float;
 
 uniform vec2 resolution;
 uniform float time;
-uniform float boom;
-uniform float boomSpeed;
+uniform float kick;
+uniform float kickSpeed;
 uniform float bpm;
 
 uniform float useraction;
@@ -53,8 +53,8 @@ float spiralDistance (vec2 v, float r) {
 }
 
 float circlePulse (
-  vec2 v, float boomForce,
-  float boomGlitchFreq, float boomGlitchAmp,
+  vec2 v, float kickForce,
+  float kickGlitchFreq, float kickGlitchAmp,
   float thin, float pulseAngle, bool fullPulse,
   float waveFreq, float waveAmp, float waveDuration,
   float bullForce
@@ -62,8 +62,8 @@ float circlePulse (
   float angle = atan(-v.x, -v.y);
   float clock = distanceRadius(0.0, angle) / PI;
   float distAngle = distanceRadius(angle, PI_x_2 * pulseAngle) / PI;
-  float f = mix(1.0, smoothstep(-1.0, 1.0, cos(boomGlitchFreq * (clock+0.1*angle+boomForce))), boomGlitchAmp);
-  float r = mix(0.35, 0.2, boomForce*f);
+  float f = mix(1.0, smoothstep(-1.0, 1.0, cos(kickGlitchFreq * (clock+0.1*angle+kickForce))), kickGlitchAmp);
+  float r = mix(0.35, 0.2, kickForce*f);
   float sc = smoothstep(1.0-waveDuration, 1.0, distAngle);
   float intensity = 0.1+0.05*sc;
   r /= mix(0.95, 1.0, waveAmp*sc*cos(angle*waveFreq));
@@ -92,11 +92,11 @@ void main (void) {
   float statePower = smoothstep(0.8, 0.0, time-useraction);
   float cPulse = circlePulse(
     p - center,
-    smoothstep(boomSpeed, 0.0, time-boom),
+    smoothstep(kickSpeed, 0.0, time-kick),
     20.0,
     0.5,
     0.5 + 0.5 * smoothstep(smoothstep(0.6, 1.0, statePower), 0.0, distance(smoothstep(0.8, 1.0, statePower), distance(p, center))),
-    mod((time-boom)/sec, 1.0),
+    mod((time-kick)/sec, 1.0),
     fullPulse,
     1.2*sqrt(bpm) + 4.0*statePower,
     2.0,
