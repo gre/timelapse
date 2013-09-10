@@ -110,14 +110,6 @@ void main (void) {
   
   c += cPulse * mainColor;
 
-/*
-  for (int x = 0; x < FREQUENCY_DATA_SIZE; ++x) {
-    if (x == int(2.0 * distance(p.x, 0.5) * float(FREQUENCY_DATA_SIZE))) {
-      c -= 0.1*vec3(10.0*p.y < smoothstep(-150.0, 0.0, frequencyData[x]) ? 1.0 : 0.0);
-    }
-  }
-  */
-
   c = clamp(
     c,
     vec3(0.05, 0.05, 0.05),
@@ -125,9 +117,9 @@ void main (void) {
   );
 
   float bpmLight = smoothstep(BPM_MIN, BPM_MAX, bpm);
-  c = mix(c * (0.5 * random(p + time) + 0.5 * random(floor(p * 100.) + time) + 0.5 * random(floor(p * 10.) + time)), c, min(1.0, 20.0*bpmLight));
-  //  c += glitch * 0.5 * cPulse * (0.5 * random(p + time) + 0.5 * random(floor(p * 100.) + time));
-  c *= 0.1 + max(0.95, 100.0*(bpmLight-0.9));
+  c = mix(c * (0.5 * random(p + time) + 0.5 * random(floor(p * 100.) + 0.01*time) - 0.5 * random(floor(p * 10.) + time)), c, min(1.0, 15.0*bpmLight));
+
+  c *= 0.1 + max(0.95, 100.0*(bpmLight-0.8));
 
   gl_FragColor = vec4(c, 1.0);
 }
