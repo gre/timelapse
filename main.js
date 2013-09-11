@@ -1,49 +1,87 @@
-(function () {
+try {(function () {
 var overlay = document.getElementById("overlay");
 var message = document.getElementById("message");
 var $score = document.getElementById("score");
 var $gf = document.getElementById("gamefeedback");
-
-var score = 0;
-function incrScore (s) {
-  score += s;
-  $score.innerHTML = score;
-}
+var $time = document.getElementById("time");
 
 function triggerFeedbackMessage (msg, color, size) {
   var e = document.createElement("div");
   $gf.appendChild(e);
   e.innerHTML = msg;
-  e.style.top = Math.floor(220 - 60*(Math.random()-0.5))+"px";
+  e.style.top = Math.floor(150 - 60*(Math.random()-0.5))+"px";
   e.style.left = Math.floor(80*(Math.random()-0.5))+"px";
   e.style.color = color;
   e.style.fontSize = size+"em";
   setTimeout(function() {
     e.className = "release";
-  }, 200);
+  }, 500);
   setTimeout(function(){
     $gf.removeChild(e);
   }, 1500);
 }
 
+function displayRemainingTime (secs) {
+  var mm = Math.floor(secs / 60);
+  var ss = secs % 60;
+  $time.innerHTML = (mm<=9 ?"0":"")+mm+":"+(ss<=9?"0":"")+ss;
+}
+
+var bpmScaleOnFailure = 0.1;
 var BPM_MIN = 30;
 var BPM_MAX = 160;
+var TOTAL_TIME = 60;
 
 var glsl; // Will be implemented
 
+var gameStartAt;
 var intro = true;
 var end = false;
 
+var score = 0;
+var dubstepStartAtTick=null, dubstepEndAtTick=null;
+var hasDubStep = false;
+
+var pulseOpeningStartTime;
+var pulseOpeningEndTime;
+var pulseClosingStartTime;
+var pulseClosingEndTime;
+
 var vars = {
+  lvl: 1,
   time: 0,
-  useraction: 0,
-  kick: 0,
+  dubstepAction: false,
+  useraction: -Infinity,
+  kick: -Infinity,
   kickSpeed: 0.2,
   bpm: 50,
   successState: 0.0,
   fullPulse: false,
-  glitch: 0.0
+  pulseOpenFrom: 0,
+  pulseOpenTo: 0
 };
+
+var lastScoreChange = 0;
+function incrScore (s) {
+  $score.className = "incr";
+  score += s;
+  $score.innerHTML = score;
+  lastScoreChange = getGameTime();
+}
+function decrScore (s) {
+  $score.className = "decr";
+  score -= s;
+  $score.innerHTML = score;
+  lastScoreChange = getGameTime();
+}
+
+function updateScore () {
+  var gt = getGameTime();
+  var recent = smoothstep(0.3, 0, gt-lastScoreChange);
+  if (recent === 0)
+    $score.className = "";
+}
+setInterval(updateScore, 100);
 
 var E = (function(_){return{pub:function(a,b,c,d){for(d=-1,c=[].concat(_[a]);c[++d];)c[d](b)},sub:function(a,b){(_[a]||(_[a]=[])).push(b)}}})({});
 
@@ -77,6 +115,15 @@ var NOTES = (function () {
 var audio = (function() {
   var ctx = new (window.AudioContext || window.webkitAudioContext)();
  
+  function startNode (node, time, offset, duration) {
+    time = time || ctx.currentTime;
+    offset = offset || 0;
+    if (duration)
+      node.start(time, offset, duration);
+    else
+      node.start(time, offset);
+  }
+
   function envelope (gainNode, time, volume, duration, a, d, s, r) {
     gainNode.gain.cancelScheduledValues(0);
     gainNode.gain.setValueAtTime(0, time);
@@ -89,12 +136,12 @@ var audio = (function() {
   function OscGain (t) {
     this.osc = ctx.createOscillator();
     if (t) this.osc.type = t;
-    this.out = this.gain = ctx.createGainNode();
+    this.out = this.gain = ctx.createGain();
     this.osc.connect(this.gain);
   }
   OscGain.prototype = {
     start: function (time, duration) {
-      this.osc.start(time, 0, duration);
+      startNode(this.osc, time, 0, duration);
     }
   };
 
@@ -105,17 +152,17 @@ var audio = (function() {
   }
   FM.prototype = {
     start: function (time, duration) {
-      this.osc.start(time, 0, duration);
+      startNode(this.osc, time, 0, duration);
       this.mod.start(time, duration);
     }
   };
 
   function Repeater (d, r, maxDelay) {
-    var out = ctx.createGainNode();
+    var out = ctx.createGain();
     var delay = ctx.createDelay(maxDelay||2);
     delay.delayTime.value = d || 0.1;
     out.connect(delay);
-    var repeatGain = ctx.createGainNode();
+    var repeatGain = ctx.createGain();
     repeatGain.gain.value = r || 0;
     delay.connect(repeatGain);
     repeatGain.connect(out);
@@ -140,9 +187,9 @@ var audio = (function() {
       _vw.push([param,mult]);
     }
 
-    var out = ctx.createGainNode();
+    var out = ctx.createGain();
 
-    var volume = ctx.createGainNode();
+    var volume = ctx.createGain();
     volume.gain.value = 0;
     vwatch(volume.gain, 1);
 
@@ -294,7 +341,7 @@ var audio = (function() {
 
   Kicker.prototype = {
     start: function (time, duration) {
-      this.osc.start(time, 0, duration);
+      startNode(this.osc, time, 0, duration);
     },
     trigger: function (time) {
       var a = this.attack, d = this.attack + 0.06, s = 0.8, r = 0.1;
@@ -312,7 +359,7 @@ var audio = (function() {
     noise.gain.gain.value = 0;
     this.noise = noise;
     this.out = noise.out;
-    this.volume = 1 || volume;
+    this.volume = volume || 1;
     this.freqFrom = freqFrom || 800;
     this.freqTo = freqTo || 1000;
     this.release = 0.3;
@@ -359,7 +406,7 @@ var audio = (function() {
     whiteNoise.buffer = noiseBuffer;
     whiteNoise.loop = true;
 
-    var gain = ctx.createGainNode();
+    var gain = ctx.createGain();
     whiteNoise.connect(gain);
 
     var filter = ctx.createBiquadFilter();
@@ -373,7 +420,7 @@ var audio = (function() {
 
   Noise.prototype = {
     start: function (time, duration) {
-      this.white.start(time, 0, duration);
+      startNode(this.white, time, 0, duration);
     }
   };
 
@@ -395,7 +442,7 @@ var audio = (function() {
   function Stereo (left, right) {
     var merger = ctx.createChannelMerger();
     if (left.inp && right.inp) {
-      var inp = ctx.createGainNode();
+      var inp = ctx.createGain();
       inp.connect(left.inp);
       inp.connect(right.inp);
       this.inp = inp;
@@ -408,7 +455,7 @@ var audio = (function() {
   }
 
   // Sounds!
-  var out = ctx.createGainNode();
+  var out = ctx.createGain();
   var outCompressor = ctx.createDynamicsCompressor();
 
   var reverb = new Reverb(0.5);
@@ -448,18 +495,40 @@ var audio = (function() {
     return wob;
   }());
 
-  var fatOut = ctx.createGainNode();
+  var fatOut = ctx.createGain();
   fatOut.connect(out);
+  fatOut.connect(wobRepeater.inp);
 
-  var bpmOsc2mult = 2;
+  var bpmOsc2mult = 3;
+  var bpmNoiseMult = 10;
+  var noiseBpmGain = ctx.createGain();
+  noiseBpmGain.connect(out);
+  var noiseBpm = new Noise();
+  noiseBpm.out.connect(noiseBpmGain);
+  noiseBpm.start(0);
+  noiseBpm.gain.gain.value = 0.2;
+  noiseBpm.filter.type = "bandpass";
+  noiseBpm.filter.Q.value = 20;
+  noiseBpm.filter.frequency.value = 0;
+
+  var bpmNoiseLfoMult = 0.05;
+  var bpmNoiseLfoPow = 1.3;
+  var lfoBpm = ctx.createOscillator();
+  lfoBpm.start(0);
+  var lfoBpmGain = ctx.createGain();
+  lfoBpmGain.gain.value = 0.8;
+  lfoBpm.connect(lfoBpmGain);
+  lfoBpmGain.connect(noiseBpmGain.gain);
+
   var osc2 = new OscGain();
   osc2.type = "sawtooth";
   osc2.osc.frequency.value = vars.bpm * bpmOsc2mult;
   osc2.osc.detune.value = 5;
-  osc2.gain.gain.value = 0.05;
+  osc2.gain.gain.value = 0.1;
   osc2.out.connect(out);
   osc2.start(0);
-  E.sub("bpmChange", function (percent) {
+  
+  var onBpmChange = function (percent) {
     var t = ctx.currentTime;
     bass.osc.detune.setValueAtTime(-200*percent, t);
     bass.osc.detune.linearRampToValueAtTime(0, t+0.2);
@@ -468,7 +537,12 @@ var audio = (function() {
     osc2.osc.detune.linearRampToValueAtTime(0, t+0.2);
     osc2.osc.frequency.setValueAtTime(bpmOsc2mult * vars.bpm, t);
     osc2.osc.frequency.setValueAtTime(bpmOsc2mult * vars.bpm, t + getKickInterval());
-  });
+
+    noiseBpm.filter.frequency.setValueAtTime(bpmNoiseMult * vars.bpm, t);
+    lfoBpm.frequency.setValueAtTime(Math.pow(bpmNoiseLfoMult*vars.bpm, bpmNoiseLfoPow), t);
+  }
+  E.sub("bpmChange", onBpmChange);
+  onBpmChange(0);
 
   var noise = new Noise();
   noise.filter.frequency.value = 180;
@@ -486,16 +560,18 @@ var audio = (function() {
   drumOut.out.connect(out);
 
   var meloOut = new Repeater();
-  meloOut.gain.gain.value = 0.5;
+  var meloVolume = 0.5;
+  meloOut.gain.gain.value = meloVolume;
   meloOut.delay.delayTime.value = 0.3;
   meloOut.out.connect(out);
 
-  var melo1, melo2, bassMelo;
+  var melo1, melo2, bassMelo, dubMelo;
 
   with (NOTES) {
     melo1 = [E3,G3,D3,G3,E3,A3,C3,G3];
     melo2 = [E3,B3,D3,G3,E3,C4,C3,D3];
     bassMelo = [G4,D4,F4,C4];
+    dubMelo = [C5,C4,E5,E4];
   }
 
   var DELTAS = [
@@ -526,7 +602,7 @@ var audio = (function() {
     setTimeout(function () {
       fm.out.disconnect(meloOut.inp);
     }, 1000);
-    fm.start(time, 0, 1);
+    startNode(fm, time, 0, 1);
     arpeggio && applyArpeggio(fm.osc.frequency, 4 * noteFreq, time, duration+release, 0.025);
     envelope(fm.gain, time, 0.5, duration, 
         0.01, 0.02, 0.6, 0.2);
@@ -536,41 +612,111 @@ var audio = (function() {
 
   function tick (i, time) {
     E.pub("tick", [i, time]);
+    var gt = getGameTime(time);
     var r = risk();
 
-    var hasDubStep = location.href.indexOf("dubstep")>-1;
-    var hasMelo = !hasDubStep && i > 64;
-    var meloIsArpeggio = i % 64 >= 32;
-    var hasBass = true;
+    hasDubStep = dubstepStartAtTick !== null && dubstepStartAtTick <= i;
+    var introduceDubstepPhase = i % 256 == 121;
+    var concludeDubstepPhase = i % 256 == 161;
+    var hasMelo = !hasDubStep && i > 64 && i % 64 < 32;
+    var meloIsArpeggio = i % 128 < 64;
+    var hasBass = dubstepStartAtTick === null;
     var hasHiHat = hasDubStep || i > 16;
-    var hasSnare = i % 4 == 2;
+    var hasSnare = dubstepStartAtTick === null && i % 4 == 2;
+
+    var fatkick = false;
+    var fatsnare = false;
+
+    if (introduceDubstepPhase) {
+      dubstepStartAtTick = i+3;
+      pulseOpeningStartTime = getGameTime(time);
+      pulseOpeningEndTime = pulseOpeningStartTime + 3*getTickSpeed();
+      fatkick = true;
+      fatsnare = true;
+      var gain = ctx.createGain();
+      gain.connect(out);
+      var vibrato = ctx.createOscillator();
+      vibrato.frequency.value = 10;
+      vibrato.connect(gain.gain);
+      var fm = new FM();
+      var duration = 0.5;
+      var release = 0.1;
+      fm.osc.type = "square";
+      fm.osc.frequency.setValueAtTime(400, time);
+      fm.osc.frequency.linearRampToValueAtTime(800, time+duration);
+      fm.mod.osc.frequency.setValueAtTime(200, time);
+      fm.mod.osc.frequency.linearRampToValueAtTime(1200, time+duration);
+      fm.mod.osc.type = "sine";
+      fm.out.connect(gain);
+      setTimeout(function () {
+        fm.out.disconnect(gain);
+      }, 1000);
+      envelope(fm.gain, time, 0.5, duration, 
+          0.01, 0.02, 0.6, 0.2);
+      envelope(fm.mod.gain, time, 600, duration, 
+          0.05, 0.1, 0.6, 0.2);
+      startNode(fm, time, 0, 1);
+      glsl.set("fullPulse", true);
+    }
+
+    if (concludeDubstepPhase) {
+      dubstepEndAtTick = i+3;
+      pulseClosingStartTime = getGameTime(time);
+      pulseClosingEndTime = pulseClosingStartTime + 3*getTickSpeed();
+    }
+
+    if (i === dubstepStartAtTick) {
+      wob.setVolume(time, 1);
+      wob.setSpeed(time, vars.bpm/60);
+      wob.setNoteFreq(time, NOTES.C4);
+      wobRepeater.repeater.gain.setValueAtTime(0, time);
+      meloOut.gain.gain.linearRampToValueAtTime(0, time+1);
+      pulseOpeningStartTime = pulseOpeningEndTime = null;
+      glsl.set("pulseOpenFrom", 0);
+      glsl.set("pulseOpenTo", 1);
+    }
+
+    if (i === dubstepEndAtTick) {
+      dubstepStartAtTick = null;
+      wob.setVolume(time, 0);
+      meloOut.gain.gain.linearRampToValueAtTime(meloVolume, time+2);
+      glsl.set("fullPulse", false);
+      pulseClosingStartTime = pulseClosingEndTime = null;
+      glsl.set("pulseOpenFrom", 0);
+      glsl.set("pulseOpenTo", 0);
+    }
 
     if (hasDubStep) {
-      wob.setSpeed(0, Math.pow(2, (2+Math.floor(i/4))%7) * vars.bpm/60);
-      wob.setNoteFreq(0, (i%16 < 8 ? 1 : 2)*(i%4<2 ? NOTES.C5 : NOTES.C4));
-      wob.setVolume(0, 1);
-      wobRepeater.gain.gain.value = 0.6 + 0.4*Math.random();
-      wobRepeater.repeater.gain.value = 0.5 + 0.7*Math.random();
+      wob.setSpeed(time, Math.pow(2, (1+Math.floor(i/4))%4) * vars.bpm/60);
+      wob.setNoteFreq(time, (i%16 < 8 ? 1 : 2)*(dubMelo[i%dubMelo.length]));//<2 ? NOTES.C5 : NOTES.C4));
+      wobRepeater.gain.gain.setValueAtTime(0.0 + 1.0*Math.random(), time);
+      wobRepeater.repeater.gain.setValueAtTime(0.99*(1-Math.random()*Math.random()), time);
       if (i%4==0) {
-        wobRepeater.repeater.gain.value = 0;
-        wobRepeater.delay.delayTime.value = 0.4*Math.random();
+        wobRepeater.repeater.gain.setValueAtTime(0, time);
+        wobRepeater.delay.delayTime.setValueAtTime(0.5*Math.random(), time);
       }
+      fatkick = i%2 == 0;
+      fatsnare = true;
+    }
       
-      // Fat Bass each tick!
-      var kick = new Kicker(100, 0.01, 0.2, 0.2);
+    // Fat Bass each tick!
+    if (fatkick) {
+      var kick = new Kicker(200, 0.01, 0.2, 0.2);
       kick.volume = 0.4;
       kick.osc.type = "square";
       var filter = ctx.createBiquadFilter();
-      filter.frequency.value = 200;
-      filter.Q.value = 5;
+      filter.frequency.value = 300;
+      filter.Q.value = 10;
       kick.out.connect(filter);
       filter.connect(fatOut);
       setTimeout(function () {
         filter.disconnect(fatOut.inp);
       }, 1000);
       kick.trigger(time);
+    }
 
-      var snare = new Snare(0.1, 2000, 1000);
+    if (fatsnare) {
+      var snare = new Snare(0.6, 2000, 1000);
       snare.release = 0;
       snare.out.connect(fatOut);
       setTimeout(function () {
@@ -640,12 +786,16 @@ var audio = (function() {
     reverb.mix(0.3+0.4*r);
   }
 
+  function getFloatTick () {
+    return currentTick + (getGameTime()-lastTickTime)/getTickSpeed();
+  }
+
   function getTickSpeed () {
     return 60 / (ticksPerBeat * vars.bpm);
   }
 
   function getCurrentKickTime () {
-    return lastTickTime - getTickSpeed() * (currentTick % 4);
+    return vars.kick;//lastTickTime - getTickSpeed() * (currentTick % 4);
   }
 
   function getKickInterval () {
@@ -655,6 +805,7 @@ var audio = (function() {
   return {
     ctx: ctx,
     update: update,
+    getFloatTick: getFloatTick,
     getTickSpeed: getTickSpeed,
     getCurrentKickTime: getCurrentKickTime,
     getKickInterval: getKickInterval,
@@ -713,7 +864,7 @@ function getAbsoluteTime () {
   return audio.ctx.currentTime;
 };
 function getGameTime (t) {
-  return (t||getAbsoluteTime()) - pauseDuration; 
+  return (t||getAbsoluteTime()) - pauseDuration;
 }
 
 function getKickPercent () {
@@ -733,14 +884,14 @@ function getKickPercent () {
 var INF = -0.4;
 var SUP = 0.3;
 
-var levels = [
-  25,
-  35,
+var scores = [
+  0,
+  30,
   50,
   65,
   80
 ];
-var levelSize = [
+var scoreSize = [
   1.5,
   2.0,
   2.5,
@@ -748,18 +899,18 @@ var levelSize = [
   3.5,
   6.0
 ];
-var levelColors = [
-  "#0df",
-  "#3f0",
+var scoreColors = [
   "#f90",
   "#fe0",
+  "#0df",
+  "#3f0",
   "#f0f"
 ];
-var levelMsgs = [
-  "Ok",
-  "Nice",
-  "Great",
-  "Awesome!",
+var scoreMsgs = [
+  "Ok.",
+  "Nice.",
+  "Great!",
+  "Awesome!!",
   "Marvelous!!!"
 ];
 var lastAction = 0;
@@ -772,14 +923,18 @@ function action () {
 
   var bpm = vars.bpm;
   if (percentDelta < INF) {
-    E.pub("bpmChange", -0.2);
-    bpm *= 0.8;
+    E.pub("bpmChange", -bpmScaleOnFailure);
+    bpm *= (1+bpmScaleOnFailure);
     successState = 0;
+    triggerFeedbackMessage("TOO FAST...", "#F00", 1.6);
+    decrScore(100);
   }
   else if (percentDelta > SUP) {
-    E.pub("bpmChange", -0.2);
-    bpm *= 0.8;
+    E.pub("bpmChange", +bpmScaleOnFailure);
+    bpm *= (1-bpmScaleOnFailure);
     successState = 0;
+    triggerFeedbackMessage("Miss", "#F00", 2.5);
+    decrScore(100);
   }
   else {
     var decrease = (0.5 * bpm * percentDelta);
@@ -793,8 +948,8 @@ function action () {
       80 * Math.pow(successState, 2)
     );
     var lvl = -1;
-    while (lvl<levels.length && levels[lvl+1] < score) lvl++;
-    if (lvl!=-1) triggerFeedbackMessage(levelMsgs[lvl], levelColors[lvl], levelSize[lvl]);
+    while (lvl<scores.length && scores[lvl+1] < score) lvl++;
+    if (lvl!=-1) triggerFeedbackMessage(scoreMsgs[lvl], scoreColors[lvl], scoreSize[lvl]);
     incrScore(score);
   }
   bpm = Math.min(200, bpm);
@@ -807,21 +962,48 @@ function action () {
   lastAction = gt;
 }
 
+var dubstepEntered = null;
+
 function spaceup () {
+  if (dubstepEntered !== null) {
+    var tick = audio.getFloatTick();
+    var dist = Math.abs(tick-dubstepEndAtTick);
+    var s = Math.round(20*(tick-dubstepEntered));
+    if (dist < 1) {
+      s += 100;
+      triggerFeedbackMessage("OMG +"+s+" !", "#0FF", 4);
+    }
+    incrScore(s);
+    dubstepEntered = tick;
+    dubstepEntered = null;
+    glsl.set("dubstepAction", false);
+  }
 }
 
 function spacedown () {
-  if (!intro && !end) action();
-}
-
-function init () {
-  E.sub("kick", function (t) {
-    // THIS IS MESSY!
-    glsl.set("kick", t);
-  });
-  E.sub("tick", function (a) {
-    tickUpdate.apply(this, a);
-  });
+  if (intro || end) return;
+  if (dubstepStartAtTick === null) {
+    action();
+  }
+  else {
+    var tick = audio.getFloatTick();
+    dubstepEntered = tick;
+    glsl.set("dubstepAction", true);
+    glsl.set("successState", 1);
+    if (tick > dubstepStartAtTick-1) {
+      var dist = Math.abs(tick-dubstepStartAtTick);
+      if (dist < 1) {
+        incrScore(100);
+        triggerFeedbackMessage("Perfect!", "#0FF", 4);
+      }
+      else {
+        triggerFeedbackMessage("Hold it now!", "#FFF", 3);
+      }
+    }
+    else {
+      triggerFeedbackMessage("Hold it now!", "#FFF", 3);
+    }
+  }
 }
 
 var currentI = -1;
@@ -837,6 +1019,7 @@ function introMessage (t) {
     overlay.className = "";
     message.innerHTML = "";
     intro = false;
+    gameStartAt = getGameTime();
   }
   else {
     if (i == 3) {
@@ -846,13 +1029,26 @@ function introMessage (t) {
   }
 }
 
+
+function levelUp() {
+  vars.lvl ++;
+  bpmScaleOnFailure = Math.min(0.7, 0.1 + vars.lvl/20);
+}
+
 function tickUpdate (tick, time) {
   if (intro && tick % 4 == 0) {
     introMessage(Math.floor(tick / 4));
     audio.kick(time, 0);
   }
+  if (hasDubStep && tick % 4 == 0) {
+    audio.kick(time, 0);
+  }
+  if (tick>0 && tick % 128 == 0) {
+    levelUp();
+  }
 }
 
+var lastRemainingTime = null;
 function update () {
   if (!glsl) return;
   var t = getAbsoluteTime();
@@ -860,29 +1056,34 @@ function update () {
   audio.update(t, gt);
   this.set("time", gt);
 
+  if (pulseOpeningStartTime) {
+    this.set("pulseOpenFrom", 0);
+    this.set("pulseOpenTo", smoothstep(pulseOpeningStartTime, pulseOpeningEndTime, gt));
+  }
+  if (pulseClosingStartTime) {
+    this.set("pulseOpenFrom", smoothstep(pulseClosingStartTime, pulseClosingEndTime, gt));
+    this.set("pulseOpenTo", 1);
+  }
+
   if (end) return;
   var kickPercent = getKickPercent();
   var currentKickTime = audio.getCurrentKickTime();
   var kickTime = audio.getKickInterval();
 
-  //console.log(currentKickTime, vars.kick);
-  /*
-  if (gt < introTime) {
-    introMessage(gt);
-    if (gt > vars.kick+kickTime) {
-      audio.kick(getAbsoluteTime(), 0);
-    }
-    return;
-  }
-  */
   if (intro) return;
   
-  if (gt > vars.kick+kickTime+kickTime*SUP) {
+  if (dubstepStartAtTick===null && gt > vars.kick+kickTime+kickTime*SUP) {
     action();
   }
 
-  if (vars.bpm < BPM_MIN || vars.bpm > BPM_MAX) {
-    E.pub("gameover", 42);
+  var remainingTime = TOTAL_TIME-Math.ceil(gt - gameStartAt);
+  if (remainingTime !== lastRemainingTime) {
+    lastRemainingTime = remainingTime;
+    displayRemainingTime(remainingTime);
+  }
+
+  if (vars.bpm < BPM_MIN || vars.bpm > BPM_MAX || remainingTime <= 0) {
+    E.pub("gameover", remainingTime <= 0);
   }
 }
 
@@ -895,18 +1096,13 @@ window.main = function (frag) {
   canvas.height = dpr * h;
   canvas.style.width = w + "px";
   canvas.style.height = h + "px";
-  glsl = Glsl({
-    canvas: canvas,
-    fragment: frag,
-    variables: vars,
-    update: update
-  });
   var stopAt = null;
   var firstStart = true;
   function start () {
     if (end) return;
     overlay.className = "";
     if (firstStart) {
+      pauseDuration = audio.ctx.currentTime;
       firstStart = false;
       audio.fadeIn(2);
     }
@@ -920,11 +1116,11 @@ window.main = function (frag) {
     }
   }
   function stop () {
+    glsl.stop();
     if (end) return;
     message.innerHTML = "Game Paused";
     overlay.className = "visible";
     audio.fadeOut(0.5);
-    glsl.stop();
     stopAt = audio.ctx.currentTime;
     if (spaceIsDown) {
       spaceup();
@@ -932,13 +1128,33 @@ window.main = function (frag) {
     }
   }
 
-  E.sub("gameover", function (score) {
+  E.sub("gameover", function (normalEnd) {
     end = true;
-    message.innerHTML = "Game Over";
     overlay.className = "visible over";
-    setTimeout(stop, 1000);
+    message.innerHTML = "Game Over";
+    document.getElementById("finalmsg").innerHTML = "Your final score: "+score;
+    setTimeout(stop, 5000);
     audio.fadeOut(5);
   });
+
+  function init () {
+    glsl = Glsl({
+      canvas: canvas,
+      fragment: frag,
+      variables: vars,
+      update: update
+    });
+
+    window.onblur = stop;
+    window.onfocus = start;
+
+    E.sub("kick", function (t) {
+      glsl.set("kick", getGameTime(t));
+    });
+    E.sub("tick", function (a) {
+      tickUpdate.apply(this, a);
+    });
+  }
 
   // Events
   var spaceIsDown = false;
@@ -996,14 +1212,34 @@ window.main = function (frag) {
   document.addEventListener("touchend", ontouchend);
   document.addEventListener("touchcancel", ontouchcancel);
 
-  window.onblur = stop;
-  window.onfocus = start;
+  var $play = document.getElementById("play");
+  var $intro = document.getElementById("intro");
+  function onPlay () {
+    $intro.style.display = "none";
+    init();
+    start();
+  }
 
-  init();
-  start();
+  $play.addEventListener("click", onPlay);
+
+  if (location.hash == "#skipintro") {
+    onPlay();
+  }
+  else {
+    $intro.style.display = "block";
+  }
+  message.innerHTML = "";
 
   window.A = audio;
   window.G = glsl;
 
 };
 }());
+} catch (e) {
+  document.getElementById("message").innerHTML = "Can't run the game";
+  var error = document.createElement("pre");
+  error.innerHTML = e;
+  document.getElementById("overlay").appendChild(error);
+  console.log(e);
+  console.log(e.stack);
+}

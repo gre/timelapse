@@ -10,12 +10,15 @@ uniform float time;
 uniform float kick;
 uniform float kickSpeed;
 uniform float bpm;
+uniform float lvl;
 
+uniform bool dubstepAction;
 uniform float useraction;
 uniform float successState;
 
 uniform bool fullPulse;
-uniform float glitch;
+uniform float pulseOpenFrom;
+uniform float pulseOpenTo;
 
 const vec2 center = vec2(0.5, 0.5);
 
@@ -67,7 +70,15 @@ float circlePulse (
   float sc = smoothstep(1.0-waveDuration, 1.0, distAngle);
   float intensity = 0.1+0.05*sc;
   r /= mix(0.95, 1.0, waveAmp*sc*cos(angle*waveFreq));
-  float ring = abs(length(v)-r) - 0.03*bullForce*(!fullPulse ? smoothstep(1.0-1.5*waveDuration, 1.0, clock) : 1.0);
+  float a = mod(PI_x_2+atan(v.x, v.y), PI_x_2)/PI_x_2;
+  float ring = abs(length(v)-r) - 0.03*bullForce*(!fullPulse ? 
+    smoothstep(1.0-1.5*waveDuration, 1.0, clock) : 
+    (
+    a < pulseOpenFrom ? smoothstep(0.05, 0.0, distance(a, pulseOpenFrom)) : 
+    a > pulseOpenTo ? smoothstep(0.05, 0.0, distance(a, pulseOpenTo)) : 
+    1.0
+    )
+  );
   float value = smoothstep(0.0, intensity, ring);
   float returnValue = 1.0/sqrt(abs(value))/1.0 * pow(thin, 2.);
   if ( length(v) < r) {
@@ -89,7 +100,8 @@ void main (void) {
   vec3 c = vec3(0.0);
   vec2 p = gl_FragCoord.xy / resolution;
   float sec = bpmToSec(bpm);
-  float statePower = smoothstep(0.8, 0.0, time-kick);
+  float statePower = smoothstep(0.8, 0.0, time-useraction);
+  float colorPower = dubstepAction ? 1.0 : statePower;
   float cPulse = circlePulse(
     p - center,
     smoothstep(kickSpeed, 0.0, time-kick),
@@ -106,7 +118,7 @@ void main (void) {
   vec3 mainColor = mix(
     COLOR_NEUTRAL,
     mix(COLOR_ERROR, COLOR_SUCCESS, successState),
-    statePower);
+    colorPower);
   
   c += cPulse * mainColor;
 
@@ -119,7 +131,7 @@ void main (void) {
   float bpmLight = smoothstep(BPM_MIN, BPM_MAX, bpm);
   c = mix(c * (0.5 * random(p + time) + 0.5 * random(floor(p * 100.) + 0.01*time) - 0.5 * random(floor(p * 10.) + time)), c, min(1.0, 15.0*bpmLight));
 
-  c *= 0.1 + max(0.95, 100.0*(bpmLight-0.8));
+  c *= 0.1 + max(0.95, 100.0*(bpmLight-0.85));
 
   gl_FragColor = vec4(c, 1.0);
 }
