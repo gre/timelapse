@@ -1,50 +1,44 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
+<html>
+  <head>
   <link rel="stylesheet" href="style.css" />
   <title>Timelapse</title>
-</head>
-<body>
-  <div id="wrapper">
-    <div id="game">
-    <canvas id="viewport" width=512 height=512></canvas>
-    <div id="gamefeedback">
+  </head>
+  <body>
+  <div id="w">
+    <div id="g">
+    <canvas id="v" width=512 height=512></canvas>
+    <div id="gf">
     </div>
-    <div id="time">1:00</div>
-    <div id="overlay" class="visible">
-      <h1 id="message">
-        Loading...
-      </h1>
-      <h2 id="finalmsg"></h2>
+    <div id="t"></div>
+    <div id="o" class="v">
+      <h1 id="m">...</h1>
+      <h2 id="fm"></h2>
     </div>
-    <div id="score">0</div>
-    <div id="intro" style="display:none">
+    <div id="s">0</div>
+    <div id="i" style="display:none">
       <h1>Timelapse</h1>
-      <a id="play" href="#skipintro">Play</a>
-      <h2>How to play</h2>
+      <a id="p" href="#skip">Play</a>
+      <h2>Tips</h2>
       <ul>
-      <li>One button game: Use space to play (or tap on Mobile).</li>
-      <li>Rythm game: press at the right beat moment.</li>
-      <li>Course game: make the best score in the limited time. Best scores with faster BPM but risky.</li>
-      <li>Control your speed with the Inertia system.</li>
-      <li>Find the equilibrium. Not too fast, not too slow.</li>
-      <li>Catch the dubstep phases.</li>
+      <li>Drop the beats with SPACE!
+      <li>Choose your speed, Don't go too fast!
+      <li>Rush to make the best score in one minute!
+      <li>Shred the Freestyle section!
       </ul>
     </div>
   </div>
+  <div id="h">
+    <h1>Your highscores</h1>
+    <ul id="hs"></ul>
+  </div>
   <footer>
-    <a href="http://twitter.com/greweb">@greweb</a> - 2013 - 
-    <a href="http://js13kgames.com">js13kgames</a>
+    @greweb - 2013 - js13kgames
   </footer>
   </div>
-  <script type="text/javascript">
-    window.onerror = function (e) {
-      alert(e);
-    };
-  </script>
-<script id="shader" type="x-shader/x-fragment">
+<script id="sh" type="x-shader/x-fragment">
 {{include 'game.glsl'}}
 </script>
 <script src="all.js"></script>
-</body>
+  </body>
 </html>

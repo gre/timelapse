@@ -1,23 +1,49 @@
-(function () { try {
+(function () {
+var overlay = $("o");
+var message = $("m");
+var $score = $("s");
+var $gf = $("gf");
+var $time = $("t");
+var $play = $("p");
+var $intro = $("i");
+var $scores = $("hs");
 
 function $(id) { return document.getElementById(id) };
 
-var overlay = $("overlay");
-var message = $("message");
-var $score = $("score");
-var $gf = $("gamefeedback");
-var $time = $("time");
-var $play = $("play");
-var $intro = $("intro");
+function getScoresFromLocalStorage () {
+  var items;
+  var itemsJson = localStorage.getItem("timelapse1");
+  if (itemsJson) {
+    try {
+      items = JSON.parse(itemsJson);
+    }
+    catch (e) {
+    }
+  }
+  if (!items) items = [];
+  return items;
+}
+
+function updateHighscores () {
+  var highscores = getScoresFromLocalStorage();
+  $scores.innerHTML = "";
+  for (var i=0; i<highscores.length; ++i) {
+    var li = document.createElement("li");
+    li.innerHTML = highscores[i];
+    $scores.appendChild(li);
+  }
+}
+
+updateHighscores();
 
 function triggerFeedbackMessage (msg, color, size) {
   var e = document.createElement("div");
   $gf.appendChild(e);
   e.innerHTML = msg;
-  e.style.top = Math.floor(150 - 60*(Math.random()-0.5))+"px";
-  e.style.left = Math.floor(80*(Math.random()-0.5))+"px";
+  e.style.top = Math.floor(160 - 100*(Math.random()-0.5))+"px";
+  e.style.left = Math.floor(100*(Math.random()-0.5))+"px";
   e.style.color = color;
-  e.style.fontSize = size+"em";
+  e.style.fontSize = (Math.floor(size*10)/10)+"em";
   setTimeout(function() {
     e.className = "release";
   }, 500);
@@ -39,6 +65,7 @@ var bpmScaleOnFailure = 0.1;
 var BPM_MIN = 30;
 var BPM_MAX = 160;
 var TOTAL_TIME = 60;
+displayRemainingTime(TOTAL_TIME);
 
 var glsl; // Will be implemented
 
@@ -64,7 +91,8 @@ var vars = {
   kickSpeed: 0.2,
   bpm: 50,
   successState: 0.0,
-  fullPulse: false,
+  dubphase: false,
+  dubloading: 0,
   pulseOpenFrom: 0,
   pulseOpenTo: 0
 };
@@ -122,16 +150,19 @@ var NOTES = (function () {
 
 var audio = (function() {
   var ctx;
-  try {
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
-  } catch (e) {
-    throw new Error("Web Audio API is not supported.");
-  }
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
 
   var ticksPerBeat = 4;
   var scheduleAheadTime = 0.1;
   var lastTickTime = -60 / (ticksPerBeat * vars.bpm);
   var currentTick = -1;
+
+  function createGain () {
+    return ctx.createGain();
+  }
+  function createOscillator () {
+    return ctx.createOscillator();
+  }
 
   function cancelScheduledValues (node, t) {
     node.cancelScheduledValues(t);
@@ -163,9 +194,9 @@ var audio = (function() {
   }
 
   function OscGain (t) {
-    this.osc = ctx.createOscillator();
+    this.osc = createOscillator();
     if (t) this.osc.type = t;
-    this.out = this.gain = ctx.createGain();
+    this.out = this.gain = createGain();
     this.osc.connect(this.gain);
   }
   OscGain.prototype = {
@@ -187,11 +218,11 @@ var audio = (function() {
   };
 
   function Repeater (d, r, maxDelay) {
-    var out = ctx.createGain();
+    var out = createGain();
     var delay = ctx.createDelay(maxDelay||2);
     delay.delayTime.value = d || 0.1;
     out.connect(delay);
-    var repeatGain = ctx.createGain();
+    var repeatGain = createGain();
     repeatGain.gain.value = r || 0;
     delay.connect(repeatGain);
     repeatGain.connect(out);
@@ -216,9 +247,9 @@ var audio = (function() {
       _vw.push([param,mult]);
     }
 
-    var out = ctx.createGain();
+    var out = createGain();
 
-    var volume = ctx.createGain();
+    var volume = createGain();
     volume.gain.value = 0;
     vwatch(volume.gain, 1);
 
@@ -310,10 +341,10 @@ var audio = (function() {
   };
 
   function Reverb (time) { // TODO
-    var input = ctx.createGain();
-    var output = ctx.createGain();
-    var drygain = ctx.createGain();
-    var wetgain = ctx.createGain();
+    var input = createGain();
+    var output = createGain();
+    var drygain = createGain();
+    var wetgain = createGain();
 
     var verb = ctx.createConvolver();
     verb.connect(wetgain);
@@ -436,7 +467,7 @@ var audio = (function() {
     whiteNoise.buffer = noiseBuffer;
     whiteNoise.loop = true;
 
-    var gain = ctx.createGain();
+    var gain = createGain();
     whiteNoise.connect(gain);
 
     var filter = ctx.createBiquadFilter();
@@ -454,25 +485,10 @@ var audio = (function() {
     }
   };
 
- function WaveShaper (amount, n_samples) {
-   // From https://github.com/janesconference/MorningStar
-   var waveShaper = ctx.createWaveShaper();
-   var curve = new Float32Array(n_samples);
-   if ((amount >= 0) && (amount < 1)) {
-     var k = 2 * amount / (1 - amount);
-     for (var i = 0; i < n_samples; i+=1) {
-       var x = (i - 0) * (1 - (-1)) / (n_samples - 0) + (-1);
-       curve[i] = (1 + k) * x / (1+ k * Math.abs(x));
-     }
-   }
-   waveShaper.curve = curve;
-   this.out = this.inp = waveShaper;
-  }
-
   function Stereo (left, right) {
     var merger = ctx.createChannelMerger();
     if (left.inp && right.inp) {
-      var inp = ctx.createGain();
+      var inp = createGain();
       inp.connect(left.inp);
       inp.connect(right.inp);
       this.inp = inp;
@@ -485,7 +501,7 @@ var audio = (function() {
   }
 
   // Sounds!
-  var out = ctx.createGain();
+  var out = createGain();
   var outCompressor = ctx.createDynamicsCompressor();
 
   var reverb = new Reverb(0.5);
@@ -525,13 +541,13 @@ var audio = (function() {
     return wob;
   }());
 
-  var fatOut = ctx.createGain();
+  var fatOut = createGain();
   fatOut.connect(out);
   fatOut.connect(wobRepeater.inp);
 
   var bpmOsc2mult = 3;
   var bpmNoiseMult = 10;
-  var noiseBpmGain = ctx.createGain();
+  var noiseBpmGain = createGain();
   noiseBpmGain.connect(out);
   var noiseBpm = new Noise();
   noiseBpm.out.connect(noiseBpmGain);
@@ -543,9 +559,9 @@ var audio = (function() {
 
   var bpmNoiseLfoMult = 0.05;
   var bpmNoiseLfoPow = 1.3;
-  var lfoBpm = ctx.createOscillator();
+  var lfoBpm = createOscillator();
   lfoBpm.start(0);
-  var lfoBpmGain = ctx.createGain();
+  var lfoBpmGain = createGain();
   lfoBpmGain.gain.value = 0.8;
   lfoBpm.connect(lfoBpmGain);
   lfoBpmGain.connect(noiseBpmGain.gain);
@@ -614,9 +630,9 @@ var audio = (function() {
     if (!deltas) deltas = DELTAS;
     var length = deltas.length;
     var ranges = [];
-    freqParam.cancelScheduledValues(0);
+    cancelScheduledValues(freqParam, 0);
     for (var t = 0, i = 0; t <= duration; t += arpDuration, i = (i+1) % length) {
-      freqParam.setValueAtTime(baseFreq * deltas[i], time + t);
+      setValueAtTime(freqParam, baseFreq * deltas[i], time + t);
     }
   }
 
@@ -641,9 +657,9 @@ var audio = (function() {
   }
 
   function dubStepAnnounce (time, m, duration) {
-      var gain = ctx.createGain();
+      var gain = createGain();
       gain.connect(out);
-      var vibrato = ctx.createOscillator();
+      var vibrato = createOscillator();
       vibrato.frequency.value = 10;
       vibrato.connect(gain.gain);
       var fm = new FM();
@@ -656,12 +672,12 @@ var audio = (function() {
       fm.osc.type = "square";
       envelope(fm.gain, time, 0.5, duration, 
           0.03, 0.05, 0.3, 0.2);
-      fm.osc.frequency.setValueAtTime(oscF-m*oscFamp, time);
-      fm.osc.frequency.linearRampToValueAtTime(oscF+m*oscFamp, time+duration);
-      fm.mod.osc.frequency.setValueAtTime(modF-m*modFamp, time);
-      fm.mod.osc.frequency.linearRampToValueAtTime(modF+m*modFamp, time+duration-0.2);
-      fm.mod.gain.gain.setValueAtTime(modF+modFamp, time);
-      fm.mod.gain.gain.linearRampToValueAtTime(modF-modFamp, time+duration-0.2);
+      setValueAtTime(fm.osc.frequency, oscF-m*oscFamp, time);
+      linearRampToValueAtTime(fm.osc.frequency, oscF+m*oscFamp, time+duration);
+      setValueAtTime(fm.mod.osc.frequency, modF-m*modFamp, time);
+      linearRampToValueAtTime(fm.mod.osc.frequency, modF+m*modFamp, time+duration-0.2);
+      setValueAtTime(fm.mod.gain.gain, modF+modFamp, time);
+      linearRampToValueAtTime(fm.mod.gain.gain, modF-modFamp, time+duration-0.2);
       fm.mod.osc.type = "sine";
       fm.out.connect(gain);
       setTimeout(function () {
@@ -674,6 +690,8 @@ var audio = (function() {
     E.pub("tick", [i, time]);
     var gt = getGameTime(time);
     var r = risk();
+
+    glsl.set("dubloading", smoothstep(74, 90, i % 128));
 
     hasDubStep = dubstepStartAtTick !== null && dubstepStartAtTick <= i;
     var introduceDubstepPhase = i % 128 == 64 + 23;
@@ -689,6 +707,7 @@ var audio = (function() {
 
     if (introduceDubstepPhase) {
       dubstepStartAtTick = i+3;
+      dubstepEndAtTick = i+40+3;
       pulseOpeningStartTime = getGameTime(time);
       pulseOpeningEndTime = pulseOpeningStartTime + 3*getTickSpeed();
 
@@ -696,12 +715,11 @@ var audio = (function() {
 
       fatkick = true;
       fatsnare = true;
-      glsl.set("fullPulse", true);
-      triggerFeedbackMessage("Hold it!", "#FFF", 3);
+      glsl.set("dubphase", true);
+      triggerFeedbackMessage("FREESTYLE!", "#FFF", 3);
     }
 
     if (concludeDubstepPhase) {
-      dubstepEndAtTick = i+3;
       pulseClosingStartTime = getGameTime(time);
       pulseClosingEndTime = pulseClosingStartTime + 3*getTickSpeed();
       dubStepAnnounce(time, -1, 4*getTickSpeed());
@@ -711,8 +729,8 @@ var audio = (function() {
       wob.setVolume(time, 1);
       wob.setSpeed(time, vars.bpm/60);
       wob.setNoteFreq(time, NOTES.C4);
-      wobRepeater.repeater.gain.setValueAtTime(0, time);
-      meloOut.gain.gain.linearRampToValueAtTime(0, time+1);
+      setValueAtTime(wobRepeater.repeater.gain, 0, time);
+      linearRampToValueAtTime(meloOut.gain.gain, 0, time+1);
       pulseOpeningStartTime = pulseOpeningEndTime = null;
       glsl.set("pulseOpenFrom", 0);
       glsl.set("pulseOpenTo", 1);
@@ -721,22 +739,17 @@ var audio = (function() {
     if (i === dubstepEndAtTick) {
       dubstepStartAtTick = null;
       wob.setVolume(time, 0);
-      meloOut.gain.gain.linearRampToValueAtTime(meloVolume, time+2);
-      glsl.set("fullPulse", false);
+      audio.setRepeater(time, 0);
+      linearRampToValueAtTime(meloOut.gain.gain, meloVolume, time+2);
+      glsl.set("dubphase", false);
       pulseClosingStartTime = pulseClosingEndTime = null;
       glsl.set("pulseOpenFrom", 0);
       glsl.set("pulseOpenTo", 0);
     }
 
     if (hasDubStep) {
-      wob.setSpeed(time, Math.pow(2, (1+Math.floor(i/4))%4) * vars.bpm/60);
-      wob.setNoteFreq(time, (i%16 < 8 ? 4 : 2)*(dubMelo[i%dubMelo.length]));//<2 ? NOTES.C5 : NOTES.C4));
-      wobRepeater.gain.gain.setValueAtTime(0.0 + 1.0*Math.random(), time);
-      wobRepeater.repeater.gain.setValueAtTime(0.99*(1-Math.random()), time);
-      if (i%4==0) {
-        wobRepeater.repeater.gain.setValueAtTime(0, time);
-        wobRepeater.delay.delayTime.setValueAtTime(0.5*Math.random(), time);
-      }
+      wob.setSpeed(time, Math.pow(2, 1+Math.floor(i/4)%3) * vars.bpm/60);
+      wob.setNoteFreq(time, (i%16 < 8 ? 4 : 2)*(dubMelo[Math.floor(i/2)%dubMelo.length]));
       fatkick = i%2 == 0;
       fatsnare = true;
     }
@@ -833,7 +846,7 @@ var audio = (function() {
   }
 
   function getCurrentKickTime () {
-    return vars.kick;//lastTickTime - getTickSpeed() * (currentTick % 4);
+    return vars.kick;
   }
 
   function getKickInterval () {
@@ -874,27 +887,37 @@ var audio = (function() {
       E.pub("kick", t);
     },
     start: function () {
-      out.gain.cancelScheduledValues(0);
-      out.gain.setValueAtTime(1, ctx.currentTime);
+      var gain = out.gain;
+      cancelScheduledValues(gain, 0);
+      setValueAtTime(gain, 1, ctx.currentTime);
     },
     stop: function () {
-      out.gain.cancelScheduledValues(0);
-      out.gain.setValueAtTime(0, ctx.currentTime);
+      var gain = out.gain;
+      cancelScheduledValues(gain, 0);
+      setValueAtTime(gain, 0, ctx.currentTime);
     },
     fadeIn: function (duration) {
       var t = ctx.currentTime;
-      out.gain.cancelScheduledValues(0);
-      out.gain.setValueAtTime(0, t);
-      out.gain.linearRampToValueAtTime(1, t+duration);
+      var gain = out.gain;
+      cancelScheduledValues(gain, 0);
+      setValueAtTime(gain, 0, t);
+      linearRampToValueAtTime(gain, 1, t+duration);
     },
     fadeOut: function (duration) {
       var t = ctx.currentTime;
-      out.gain.cancelScheduledValues(0);
-      out.gain.setValueAtTime(1, t);
-      out.gain.linearRampToValueAtTime(0, t+duration);
+      var gain = out.gain;
+      cancelScheduledValues(gain, 0);
+      setValueAtTime(gain, 1, t);
+      linearRampToValueAtTime(gain, 0, t+duration);
+    },
+    setRepeater: function (time, r) {
+      setValueAtTime(wobRepeater.repeater.gain, 0, time);
+      setValueAtTime(wobRepeater.delay.delayTime, 0.5*Math.random()*Math.random(), time);
+      linearRampToValueAtTime(wobRepeater.repeater.gain, 0.98*r, time+0.01);
     }
   };
 }());
+A=audio;
 
 var pauseDuration = 0;
 
@@ -987,7 +1010,8 @@ function action () {
     );
     var lvl = -1;
     while (lvl<scores.length && scores[lvl+1] < score) lvl++;
-    if (lvl!=-1) triggerFeedbackMessage(scoreMsgs[lvl], scoreColors[lvl], scoreSize[lvl]);
+    score = Math.round(Math.pow(score, 1.3)/2);
+    if (lvl!=-1) triggerFeedbackMessage(Math.random()<0.2 ? scoreMsgs[lvl] : "+"+score, scoreColors[lvl], scoreSize[lvl]);
     incrScore(score);
   }
   bpm = Math.min(200, bpm);
@@ -1002,23 +1026,48 @@ function action () {
 
 var dubstepEntered = null;
 
+var deltaticks = [
+  "Awesome Solo!",
+  "Nice Shred!",
+  "Gnarly Groove!",
+  "Killer Riff!!",
+  "Wicked Shredding!!!"
+];
+function getTextForDeltaTick (d) {
+  d = Math.round(d);
+  if (Math.random()*d < 1) return null;
+  var last = deltaticks.length - 1;
+  if (d > last) return deltaticks[last];
+  return deltaticks[d];
+}
+
 function spaceup () {
   if (dubstepEntered !== null) {
     var tick = audio.getFloatTick();
-    var dist = Math.abs(tick-dubstepEndAtTick);
-    var s = Math.round(20*(tick-dubstepEntered));
-    if (dist < 1) {
-      s *= 2;
-      s+= 100;
-      triggerFeedbackMessage("OMG +"+s+" !", "#0FF", 4);
+    var delta = tick - dubstepEntered;
+    var p = smoothstep(dubstepStartAtTick, dubstepEndAtTick, tick);
+    var s = 10+40*p;
+    var text, color, size;
+    if (delta > 1) {
+      var d = delta-1;
+      s += 100 + Math.pow(d, 0.9) * 100;
+      text = getTextForDeltaTick(d);
+      color = scoreColors[Math.floor(d)]||"#F0F";
+      size = Math.min(4, 2+d/4);
     }
     else {
-      triggerFeedbackMessage("+"+s, "#0FF", 4);
+      color = "#000";
+      size = 2+2*p;
     }
-    incrScore(s);
-    dubstepEntered = tick;
+    s *= vars.bpm / 100;
+    s = Math.round(s);
+    if (s > 0) {
+      triggerFeedbackMessage(text || "+"+s, color, size);
+      incrScore(s);
+    }
     dubstepEntered = null;
     glsl.set("dubstepAction", false);
+    audio.setRepeater(audio.ctx.currentTime, 0);
   }
 }
 
@@ -1032,13 +1081,7 @@ function spacedown () {
     dubstepEntered = tick;
     glsl.set("dubstepAction", true);
     glsl.set("successState", 1);
-    if (tick > dubstepStartAtTick-1) {
-      var dist = Math.abs(tick-dubstepStartAtTick);
-      if (dist < 1) {
-        incrScore(100);
-        triggerFeedbackMessage("Perfect!", "#0FF", 4);
-      }
-    }
+    audio.setRepeater(audio.ctx.currentTime, 1);
   }
 }
 
@@ -1048,7 +1091,7 @@ function introMessage (t) {
   if (currentI === i) return;
   currentI = i;
   if (i == 0) {
-    overlay.className = "visible intro";
+    overlay.className = "v intro";
     message.innerHTML = "Ready?";
   }
   else if (i == 4) {
@@ -1059,7 +1102,7 @@ function introMessage (t) {
   }
   else {
     if (i == 3) {
-      overlay.className = "visible intro fadeout";
+      overlay.className = "v intro fadeout";
     }
     message.innerHTML = ""+(4-i);
   }
@@ -1114,7 +1157,6 @@ function update () {
   if (dubstepEntered!== null && dubstepStartAtTick===null) {
     dubstepEntered = null;
     glsl.set("dubstepAction", false);
-    triggerFeedbackMessage("Missed the Release..", "#f00", 2);
   }
 
   var remainingTime = TOTAL_TIME-Math.ceil(gt - gameStartAt);
@@ -1128,8 +1170,8 @@ function update () {
   }
 }
 
-var frag = $("shader").innerHTML;
-var canvas = $("viewport");
+var frag = $("sh").innerHTML;
+var canvas = $("v");
 var dpr = window.devicePixelRatio || 1;
 var w = canvas.width;
 var h = canvas.height;
@@ -1160,7 +1202,7 @@ function stop () {
   glsl.stop();
   if (end) return;
   message.innerHTML = "Game Paused";
-  overlay.className = "visible";
+  overlay.className = "v";
   audio.fadeOut(0.5);
   stopAt = audio.ctx.currentTime;
   if (spaceIsDown) {
@@ -1168,15 +1210,23 @@ function stop () {
     spaceIsDown = false;
   }
 }
-
 E.sub("gameover", function (normalEnd) {
   end = true;
-  overlay.className = "visible over";
-  message.innerHTML = "Game Over";
-  $("finalmsg").innerHTML = "Your final score: "+score+'<br/><a href="./?skipintro">Play Again</a>';
+  overlay.className = "v over";
+  message.innerHTML = normalEnd ? "Congratulations" : "Game Over";
+  $("fm").innerHTML = "Your final score: "+score+'<br/><a href="./?skip">Restart</a>';
   setTimeout(stop, 5000);
   audio.fadeOut(5);
-  var itemsJson = localStorage.getItem("timelapse_scores_v1");
+  if (score > 0) {
+    var items = getScoresFromLocalStorage();
+    items.push(score);
+    items.sort(function (a, b) {
+      return a < b;
+    });
+    items = items.slice(0, 5);
+    localStorage.setItem("timelapse1", JSON.stringify(items));
+    updateHighscores();
+  }
 });
 
 function init () {
@@ -1216,8 +1266,13 @@ function onkeydown (e) {
     spaceIsDown = true;
   }
 }
-document.addEventListener("keyup", onkeyup);
-document.addEventListener("keydown", onkeydown);
+
+function bindDoc (ev, cb) {
+  document.addEventListener(ev, cb);
+}
+
+bindDoc("keyup", onkeyup);
+bindDoc("keydown", onkeydown);
 
 // Touch devices
 var identifier = null;
@@ -1250,9 +1305,10 @@ function ontouchcancel (e) {
   spaceIsDown = false;
   !end && spaceup();
 }
-document.addEventListener("touchstart", ontouchstart);
-document.addEventListener("touchend", ontouchend);
-document.addEventListener("touchcancel", ontouchcancel);
+
+bindDoc("touchstart", ontouchstart);
+bindDoc("touchend", ontouchend);
+bindDoc("touchcancel", ontouchcancel);
 
 var playClicked = false;
 function onPlay (e) {
@@ -1267,21 +1323,10 @@ function onPlay (e) {
 $play.addEventListener("click", onPlay, false);
 $play.addEventListener("touchend", onPlay, false);
 
-if (location.href.indexOf("skipintro")>-1) {
+if (location.href.indexOf("skip")>-1)
   onPlay();
-}
-else {
+else
   $intro.style.display = "block";
-}
 message.innerHTML = "";
-
-} catch (e) {
-  $("message").innerHTML = "Can't run the game";
-  var error = document.createElement("pre");
-  error.innerHTML = e;
-  $("overlay").appendChild(error);
-  console.log(e);
-  console.log(e.stack);
-}
 
 }());

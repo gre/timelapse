@@ -16,7 +16,8 @@ uniform bool dubstepAction;
 uniform float useraction;
 uniform float successState;
 
-uniform bool fullPulse;
+uniform float dubloading;
+uniform bool dubphase;
 uniform float pulseOpenFrom;
 uniform float pulseOpenTo;
 
@@ -52,13 +53,18 @@ float distanceRadius (float a, float b) {
 float spiralDistance (vec2 v, float r) {
   float d = length(v);
   float a = (PI + atan(v.x, v.y))/PI_x_2;
-  return distance(1.0, 2.0 * smoothstep(0.0, 1.0, fract(log(d/r)+a)));
+  float n = log(d/r)+a;
+  return distance(1.0, 2.0 * smoothstep(0.0, 1.0, fract(n)));
+}
+
+float bpmToSec (float bpm) {
+  return 60. / bpm;
 }
 
 float circlePulse (
   vec2 v, float kickForce,
   float kickGlitchFreq, float kickGlitchAmp,
-  float thin, float pulseAngle, bool fullPulse,
+  float thin, float pulseAngle, bool dubphase,
   float waveFreq, float waveAmp, float waveDuration,
   float bullForce
 ) {
@@ -71,7 +77,7 @@ float circlePulse (
   float intensity = 0.1+0.05*sc;
   r /= mix(0.95, 1.0, waveAmp*sc*cos(angle*waveFreq));
   float a = mod(PI_x_2+atan(v.x, v.y), PI_x_2)/PI_x_2;
-  float ring = abs(length(v)-r) - 0.03*bullForce*(!fullPulse ? 
+  float ring = abs(length(v)-r) - 0.03*bullForce*(!dubphase ? 
     smoothstep(1.0-1.5*waveDuration, 1.0, clock) : 
     (
     a < pulseOpenFrom ? smoothstep(0.05, 0.0, distance(a, pulseOpenFrom)) : 
@@ -82,18 +88,23 @@ float circlePulse (
   float value = smoothstep(0.0, intensity, ring);
   float returnValue = 1.0/sqrt(abs(value))/1.0 * pow(thin, 2.);
   if ( length(v) < r) {
-    float s = spiralDistance(
-      v,
-      PI
-    );
+    float sr = PI;
+    float s = spiralDistance(v, sr);
+    float a = (PI + atan(v.x, v.y))/PI_x_2;;
+    float v = 
+      smoothstep(0.02, 0., distanceRadius(PI+pulseAngle*PI_x_2, a*PI_x_2)/PI) *
+      smoothstep(0.2, 0., s);
+    returnValue += v * 2.0;
     s = 1.0 - pow(smoothstep(0.0, 0.3, s), 0.3);
     returnValue += s;
   }
+  float centerIntensity = dubphase ? 0.1 : 0.1*dubloading;
+  if (centerIntensity > 0.0) {
+    float s = bpmToSec(bpm);
+    float c = mix(1.0, 10.0, mod(time, s)/s) * smoothstep(centerIntensity, 0.0, length(v));
+    returnValue += c;
+  }
   return returnValue;
-}
-
-float bpmToSec (float bpm) {
-  return 60. / bpm;
 }
 
 void main (void) {
@@ -109,7 +120,7 @@ void main (void) {
     0.5,
     0.5 + 0.5 * smoothstep(smoothstep(0.6, 1.0, statePower), 0.0, distance(smoothstep(0.8, 1.0, statePower), distance(p, center))),
     mod((time-kick)/sec, 1.0),
-    fullPulse,
+    dubphase,
     1.2*sqrt(bpm) + 4.0*statePower,
     2.0,
     min(0.5, bpm / 800.0),
