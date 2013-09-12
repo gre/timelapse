@@ -22,6 +22,9 @@ function triggerFeedbackMessage (msg, color, size) {
 }
 
 function displayRemainingTime (secs) {
+  if (secs < 10) {
+    $time.className = "hl";
+  }
   var mm = Math.floor(secs / 60);
   var ss = secs % 60;
   $time.innerHTML = (mm<=9 ?"0":"")+mm+":"+(ss<=9?"0":"")+ss;
@@ -571,7 +574,7 @@ var audio = (function() {
     melo1 = [E3,G3,D3,G3,E3,A3,C3,G3];
     melo2 = [E3,B3,D3,G3,E3,C4,C3,D3];
     bassMelo = [G4,D4,F4,C4];
-    dubMelo = [C5,C4,E5,E4];
+    dubMelo = [E3,G3,A3,E3,G3,a3,A3,E3,G3,A3,G3,E3];
   }
 
   var DELTAS = [
@@ -610,14 +613,44 @@ var audio = (function() {
         0.05, 0.1, 0.6, 0.2);
   }
 
+  function dubStepAnnounce (time, m, duration) {
+      var gain = ctx.createGain();
+      gain.connect(out);
+      var vibrato = ctx.createOscillator();
+      vibrato.frequency.value = 10;
+      vibrato.connect(gain.gain);
+      var fm = new FM();
+      var release = 0.3;
+      var oscF = 200;
+      var oscFamp = 150;
+      var modF = 100;
+      var modFamp = 80;
+
+      fm.osc.type = "square";
+      envelope(fm.gain, time, 0.5, duration, 
+          0.03, 0.05, 0.3, 0.2);
+      fm.osc.frequency.setValueAtTime(oscF-m*oscFamp, time);
+      fm.osc.frequency.linearRampToValueAtTime(oscF+m*oscFamp, time+duration);
+      fm.mod.osc.frequency.setValueAtTime(modF-m*modFamp, time);
+      fm.mod.osc.frequency.linearRampToValueAtTime(modF+m*modFamp, time+duration-0.2);
+      fm.mod.gain.gain.setValueAtTime(modF+modFamp, time);
+      fm.mod.gain.gain.linearRampToValueAtTime(modF-modFamp, time+duration-0.2);
+      fm.mod.osc.type = "sine";
+      fm.out.connect(gain);
+      setTimeout(function () {
+        fm.out.disconnect(gain);
+      }, Math.ceil(1000*(duration+release+0.2)));
+      startNode(fm, time, 0, 1);
+  }
+
   function tick (i, time) {
     E.pub("tick", [i, time]);
     var gt = getGameTime(time);
     var r = risk();
 
     hasDubStep = dubstepStartAtTick !== null && dubstepStartAtTick <= i;
-    var introduceDubstepPhase = i % 256 == 121;
-    var concludeDubstepPhase = i % 256 == 161;
+    var introduceDubstepPhase = i % 128 == 64 + 23;
+    var concludeDubstepPhase = i % 128 == 64 + 63;
     var hasMelo = !hasDubStep && i > 64 && i % 64 < 32;
     var meloIsArpeggio = i % 128 < 64;
     var hasBass = dubstepStartAtTick === null;
@@ -631,38 +664,20 @@ var audio = (function() {
       dubstepStartAtTick = i+3;
       pulseOpeningStartTime = getGameTime(time);
       pulseOpeningEndTime = pulseOpeningStartTime + 3*getTickSpeed();
+
+      dubStepAnnounce(time, 1, 4*getTickSpeed());
+
       fatkick = true;
       fatsnare = true;
-      var gain = ctx.createGain();
-      gain.connect(out);
-      var vibrato = ctx.createOscillator();
-      vibrato.frequency.value = 10;
-      vibrato.connect(gain.gain);
-      var fm = new FM();
-      var duration = 0.5;
-      var release = 0.1;
-      fm.osc.type = "square";
-      fm.osc.frequency.setValueAtTime(400, time);
-      fm.osc.frequency.linearRampToValueAtTime(800, time+duration);
-      fm.mod.osc.frequency.setValueAtTime(200, time);
-      fm.mod.osc.frequency.linearRampToValueAtTime(1200, time+duration);
-      fm.mod.osc.type = "sine";
-      fm.out.connect(gain);
-      setTimeout(function () {
-        fm.out.disconnect(gain);
-      }, 1000);
-      envelope(fm.gain, time, 0.5, duration, 
-          0.01, 0.02, 0.6, 0.2);
-      envelope(fm.mod.gain, time, 600, duration, 
-          0.05, 0.1, 0.6, 0.2);
-      startNode(fm, time, 0, 1);
       glsl.set("fullPulse", true);
+      triggerFeedbackMessage("Hold it!", "#FFF", 3);
     }
 
     if (concludeDubstepPhase) {
       dubstepEndAtTick = i+3;
       pulseClosingStartTime = getGameTime(time);
       pulseClosingEndTime = pulseClosingStartTime + 3*getTickSpeed();
+      dubStepAnnounce(time, -1, 4*getTickSpeed());
     }
 
     if (i === dubstepStartAtTick) {
@@ -688,9 +703,9 @@ var audio = (function() {
 
     if (hasDubStep) {
       wob.setSpeed(time, Math.pow(2, (1+Math.floor(i/4))%4) * vars.bpm/60);
-      wob.setNoteFreq(time, (i%16 < 8 ? 1 : 2)*(dubMelo[i%dubMelo.length]));//<2 ? NOTES.C5 : NOTES.C4));
+      wob.setNoteFreq(time, (i%16 < 8 ? 4 : 2)*(dubMelo[i%dubMelo.length]));//<2 ? NOTES.C5 : NOTES.C4));
       wobRepeater.gain.gain.setValueAtTime(0.0 + 1.0*Math.random(), time);
-      wobRepeater.repeater.gain.setValueAtTime(0.99*(1-Math.random()*Math.random()), time);
+      wobRepeater.repeater.gain.setValueAtTime(0.99*(1-Math.random()), time);
       if (i%4==0) {
         wobRepeater.repeater.gain.setValueAtTime(0, time);
         wobRepeater.delay.delayTime.setValueAtTime(0.5*Math.random(), time);
@@ -970,8 +985,12 @@ function spaceup () {
     var dist = Math.abs(tick-dubstepEndAtTick);
     var s = Math.round(20*(tick-dubstepEntered));
     if (dist < 1) {
-      s += 100;
+      s *= 2;
+      s+= 100;
       triggerFeedbackMessage("OMG +"+s+" !", "#0FF", 4);
+    }
+    else {
+      triggerFeedbackMessage("+"+s, "#0FF", 4);
     }
     incrScore(s);
     dubstepEntered = tick;
@@ -996,12 +1015,6 @@ function spacedown () {
         incrScore(100);
         triggerFeedbackMessage("Perfect!", "#0FF", 4);
       }
-      else {
-        triggerFeedbackMessage("Hold it now!", "#FFF", 3);
-      }
-    }
-    else {
-      triggerFeedbackMessage("Hold it now!", "#FFF", 3);
     }
   }
 }
@@ -1074,6 +1087,11 @@ function update () {
   
   if (dubstepStartAtTick===null && gt > vars.kick+kickTime+kickTime*SUP) {
     action();
+  }
+  if (dubstepEntered!== null && dubstepStartAtTick===null) {
+    dubstepEntered = null;
+    glsl.set("dubstepAction", false);
+    triggerFeedbackMessage("Missed the Release..", "#f00", 2);
   }
 
   var remainingTime = TOTAL_TIME-Math.ceil(gt - gameStartAt);
