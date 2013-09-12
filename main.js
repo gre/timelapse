@@ -116,7 +116,12 @@ var NOTES = (function () {
 }());
 
 var audio = (function() {
-  var ctx = new (window.AudioContext || window.webkitAudioContext)();
+  var ctx;
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (e) {
+    throw new Error("Web Audio API is not supported.");
+  }
  
   function startNode (node, time, offset, duration) {
     time = time || ctx.currentTime;

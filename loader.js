@@ -1,6 +1,5 @@
 (function(){
-
-  var L = this.Loader = {
+  Loader = {
     text: function (url, callback) {
       var xhr = new XMLHttpRequest();
       xhr.onreadystatechange = function () {
@@ -12,5 +11,4 @@
       xhr.send();
     }
   };
-
-}).call(this);
+})();
