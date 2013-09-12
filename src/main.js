@@ -1,9 +1,14 @@
-try {(function () {
-var overlay = document.getElementById("overlay");
-var message = document.getElementById("message");
-var $score = document.getElementById("score");
-var $gf = document.getElementById("gamefeedback");
-var $time = document.getElementById("time");
+(function () { try {
+
+function $(id) { return document.getElementById(id) };
+
+var overlay = $("overlay");
+var message = $("message");
+var $score = $("score");
+var $gf = $("gamefeedback");
+var $time = $("time");
+var $play = $("play");
+var $intro = $("intro");
 
 function triggerFeedbackMessage (msg, color, size) {
   var e = document.createElement("div");
@@ -122,6 +127,21 @@ var audio = (function() {
   } catch (e) {
     throw new Error("Web Audio API is not supported.");
   }
+
+  var ticksPerBeat = 4;
+  var scheduleAheadTime = 0.1;
+  var lastTickTime = -60 / (ticksPerBeat * vars.bpm);
+  var currentTick = -1;
+
+  function cancelScheduledValues (node, t) {
+    node.cancelScheduledValues(t);
+  }
+  function setValueAtTime (node, value, time) {
+    node.setValueAtTime(value, time);
+  }
+  function linearRampToValueAtTime (node, value, time) {
+    node.linearRampToValueAtTime(value, time);
+  }
  
   function startNode (node, time, offset, duration) {
     time = time || ctx.currentTime;
@@ -133,12 +153,13 @@ var audio = (function() {
   }
 
   function envelope (gainNode, time, volume, duration, a, d, s, r) {
-    gainNode.gain.cancelScheduledValues(0);
-    gainNode.gain.setValueAtTime(0, time);
-    gainNode.gain.linearRampToValueAtTime(volume, time + a);
-    gainNode.gain.linearRampToValueAtTime(volume * s, time + a + d);
-    gainNode.gain.setValueAtTime(volume * s, time + a + d + duration);
-    gainNode.gain.linearRampToValueAtTime(0, time + a + d + duration + r);
+    var gain = gainNode.gain;
+    cancelScheduledValues(gain, 0);
+    setValueAtTime(gain, 0, time);
+    linearRampToValueAtTime(gain, volume, time + a);
+    linearRampToValueAtTime(gain, volume * s, time + a + d);
+    setValueAtTime(gain, volume * s, time + a + d + duration);
+    linearRampToValueAtTime(gain, 0, time + a + d + duration + r);
   }
 
   function OscGain (t) {
@@ -270,20 +291,20 @@ var audio = (function() {
   CrazyWob.prototype = {
     setVolume: function (t, v) {
       this._vw.forEach(function (w) {
-        w[0].cancelScheduledValues(0);
-        w[0].setValueAtTime(v*w[1], t);
+        cancelScheduledValues(w[0], 0);
+        setValueAtTime(w[0], v*w[1], t);
       });
     },
     setSpeed: function (t, s) {
       this._sw.forEach(function (w) {
-        w[0].cancelScheduledValues(0);
-        w[0].setValueAtTime(s*w[1], t);
+        cancelScheduledValues(w[0], 0);
+        setValueAtTime(w[0], s*w[1], t);
       });
     },
     setNoteFreq: function (t, f) {
       this._fw.forEach(function (w) {
-        w[0].cancelScheduledValues(0);
-        w[0].setValueAtTime(f*w[1], t);
+        cancelScheduledValues(w[0], 0);
+        setValueAtTime(w[0], f*w[1], t);
       });
     }
   };
@@ -343,8 +364,8 @@ var audio = (function() {
     this.freq = freq || 50;
     this.fall = fall || 0;
     this.attack = attack || 0;
-    this.duration = duration || 0;
-    this.volume = 1.0;
+    this.duration = duration || 0;
+    this.volume = 1;
   }
 
   Kicker.prototype = {
@@ -355,8 +376,8 @@ var audio = (function() {
       var a = this.attack, d = this.attack + 0.06, s = 0.8, r = 0.1;
       this.start(time, this.duration + 1);
       envelope(this.gain, time, this.volume, this.duration, a, d, s, r);
-      this.osc.frequency.setValueAtTime(this.freq, time);
-      this.osc.frequency.linearRampToValueAtTime(0, time + this.fall);
+      setValueAtTime(this.osc.frequency, this.freq, time);
+      linearRampToValueAtTime(this.osc.frequency, 0, time + this.fall);
     }
   };
 
@@ -378,8 +399,9 @@ var audio = (function() {
       this.noise.start(time, 1);
       envelope(this.noise.gain, time, this.volume, 0.05, 
           0.01, 0.03, 0.25, this.release);
-      this.noise.filter.frequency.setValueAtTime(this.freqFrom, time);
-      this.noise.filter.frequency.linearRampToValueAtTime(this.freqTo, time+0.1);
+      var f = this.noise.filter.frequency;
+      setValueAtTime(f, this.freqFrom, time);
+      linearRampToValueAtTime(f, this.freqTo, time+0.1);
     }
   };
 
@@ -538,16 +560,16 @@ var audio = (function() {
   
   var onBpmChange = function (percent) {
     var t = ctx.currentTime;
-    bass.osc.detune.setValueAtTime(-200*percent, t);
-    bass.osc.detune.linearRampToValueAtTime(0, t+0.2);
+    setValueAtTime(bass.osc.detune, -200*percent, t);
+    linearRampToValueAtTime(bass.osc.detune, 0, t+0.2);
 
-    osc2.osc.detune.setValueAtTime(-1000*percent, t);
-    osc2.osc.detune.linearRampToValueAtTime(0, t+0.2);
-    osc2.osc.frequency.setValueAtTime(bpmOsc2mult * vars.bpm, t);
-    osc2.osc.frequency.setValueAtTime(bpmOsc2mult * vars.bpm, t + getKickInterval());
+    setValueAtTime(osc2.osc.detune, -1000*percent, t);
+    linearRampToValueAtTime(osc2.osc.detune, 0, t+0.2);
+    setValueAtTime(osc2.osc.frequency, bpmOsc2mult * vars.bpm, t);
+    setValueAtTime(osc2.osc.frequency, bpmOsc2mult * vars.bpm, t + getKickInterval());
 
-    noiseBpm.filter.frequency.setValueAtTime(bpmNoiseMult * vars.bpm, t);
-    lfoBpm.frequency.setValueAtTime(Math.pow(bpmNoiseLfoMult*vars.bpm, bpmNoiseLfoPow), t);
+    setValueAtTime(noiseBpm.filter.frequency, bpmNoiseMult * vars.bpm, t);
+    setValueAtTime(lfoBpm.frequency, Math.pow(bpmNoiseLfoMult*vars.bpm, bpmNoiseLfoPow), t);
   }
   E.sub("bpmChange", onBpmChange);
   onBpmChange(0);
@@ -785,10 +807,6 @@ var audio = (function() {
       smoothstep(BPM_MAX*0.8, BPM_MAX, vars.bpm);
   }
 
-  var ticksPerBeat = 4;
-  var scheduleAheadTime = 0.1;
-  var lastTickTime = -60 / (ticksPerBeat * vars.bpm);
-  var currentTick = -1;
   function update (time, gameTime) {
     var tickTime = getTickSpeed();
     var nextTickTime;
@@ -1110,159 +1128,160 @@ function update () {
   }
 }
 
-window.main = function (frag) {
-  var canvas = document.getElementById("viewport");
-  var dpr = window.devicePixelRatio || 1;
-  var w = canvas.width;
-  var h = canvas.height;
-  canvas.width = dpr * w;
-  canvas.height = dpr * h;
-  canvas.style.width = w + "px";
-  canvas.style.height = h + "px";
-  var stopAt = null;
-  var firstStart = true;
-  function start () {
-    if (end) return;
-    overlay.className = "";
-    if (firstStart) {
-      pauseDuration = audio.ctx.currentTime;
-      firstStart = false;
-      audio.fadeIn(2);
-    }
-    else {
-      audio.start();
-    }
-    glsl.start();
-    if (stopAt !== null) {
-      pauseDuration += (audio.ctx.currentTime - stopAt);
-      stopAt = null;
-    }
-  }
-  function stop () {
-    glsl.stop();
-    if (end) return;
-    message.innerHTML = "Game Paused";
-    overlay.className = "visible";
-    audio.fadeOut(0.5);
-    stopAt = audio.ctx.currentTime;
-    if (spaceIsDown) {
-      spaceup();
-      spaceIsDown = false;
-    }
-  }
-
-  E.sub("gameover", function (normalEnd) {
-    end = true;
-    overlay.className = "visible over";
-    message.innerHTML = "Game Over";
-    document.getElementById("finalmsg").innerHTML = "Your final score: "+score;
-    setTimeout(stop, 5000);
-    audio.fadeOut(5);
-  });
-
-  function init () {
-    glsl = Glsl({
-      canvas: canvas,
-      fragment: frag,
-      variables: vars,
-      update: update
-    });
-
-    window.onblur = stop;
-    window.onfocus = start;
-
-    E.sub("kick", function (t) {
-      glsl.set("kick", getGameTime(t));
-    });
-    E.sub("tick", function (a) {
-      tickUpdate.apply(this, a);
-    });
-  }
-
-  // Events
-  var spaceIsDown = false;
-  function onkeyup (e) {
-    if (e.which === 32) {
-      e.preventDefault();
-      if (spaceIsDown)
-        !end && spaceup();
-      spaceIsDown = false;
-    }
-  }
-  function onkeydown (e) {
-    if (e.which === 32) {
-      e.preventDefault();
-      if (!spaceIsDown)
-        !end && spacedown();
-      spaceIsDown = true;
-    }
-  }
-  document.addEventListener("keyup", onkeyup);
-  document.addEventListener("keydown", onkeydown);
-
-  // Touch devices
-  var identifier = null;
-  function getCurrentTouch (e) {
-    for (var i=0; i<e.changedTouches.length; ++i)
-      if (e.changedTouches[i].identifier === identifier)
-        return e.changedTouches[i];
-  }
-  function ontouchstart (e) {
-    e.preventDefault();
-    if (identifier !== null) return;
-    var touch = e.changedTouches[0];
-    identifier = touch.identifier;
-    spaceIsDown = true;
-    !end && spacedown();
-  }
-  function ontouchend (e) {
-    if (identifier === null) return;
-    var touch = getCurrentTouch(e);
-    if (!touch) return;
-    identifier = null;
-    spaceIsDown = false;
-    !end && spaceup();
-  }
-  function ontouchcancel (e) {
-    if (identifier === null) return;
-    var touch = getCurrentTouch(e);
-    if (!touch) return;
-    identifier = null;
-    spaceIsDown = false;
-    !end && spaceup();
-  }
-  document.addEventListener("touchstart", ontouchstart);
-  document.addEventListener("touchend", ontouchend);
-  document.addEventListener("touchcancel", ontouchcancel);
-
-  var $play = document.getElementById("play");
-  var $intro = document.getElementById("intro");
-  function onPlay () {
-    $intro.style.display = "none";
-    init();
-    start();
-  }
-
-  $play.addEventListener("click", onPlay);
-
-  if (location.hash == "#skipintro") {
-    onPlay();
+var frag = $("shader").innerHTML;
+var canvas = $("viewport");
+var dpr = window.devicePixelRatio || 1;
+var w = canvas.width;
+var h = canvas.height;
+canvas.width = dpr * w;
+canvas.height = dpr * h;
+canvas.style.width = w + "px";
+canvas.style.height = h + "px";
+var stopAt = null;
+var firstStart = true;
+function start () {
+  if (end) return;
+  overlay.className = "";
+  if (firstStart) {
+    pauseDuration = audio.ctx.currentTime;
+    firstStart = false;
+    audio.fadeIn(2);
   }
   else {
-    $intro.style.display = "block";
+    audio.start();
   }
-  message.innerHTML = "";
+  glsl.start();
+  if (stopAt !== null) {
+    pauseDuration += (audio.ctx.currentTime - stopAt);
+    stopAt = null;
+  }
+}
+function stop () {
+  glsl.stop();
+  if (end) return;
+  message.innerHTML = "Game Paused";
+  overlay.className = "visible";
+  audio.fadeOut(0.5);
+  stopAt = audio.ctx.currentTime;
+  if (spaceIsDown) {
+    spaceup();
+    spaceIsDown = false;
+  }
+}
 
-  window.A = audio;
-  window.G = glsl;
+E.sub("gameover", function (normalEnd) {
+  end = true;
+  overlay.className = "visible over";
+  message.innerHTML = "Game Over";
+  $("finalmsg").innerHTML = "Your final score: "+score+'<br/><a href="./?skipintro">Play Again</a>';
+  setTimeout(stop, 5000);
+  audio.fadeOut(5);
+  var itemsJson = localStorage.getItem("timelapse_scores_v1");
+});
 
-};
-}());
+function init () {
+  glsl = Glsl({
+    canvas: canvas,
+    fragment: frag,
+    variables: vars,
+    update: update
+  });
+
+  window.onblur = stop;
+  window.onfocus = start;
+
+  E.sub("kick", function (t) {
+    glsl.set("kick", getGameTime(t));
+  });
+  E.sub("tick", function (a) {
+    tickUpdate.apply(this, a);
+  });
+}
+
+// Events
+var spaceIsDown = false;
+function onkeyup (e) {
+  if (e.which === 32) {
+    e.preventDefault();
+    if (spaceIsDown)
+      !end && spaceup();
+    spaceIsDown = false;
+  }
+}
+function onkeydown (e) {
+  if (e.which === 32) {
+    e.preventDefault();
+    if (!spaceIsDown)
+      !end && spacedown();
+    spaceIsDown = true;
+  }
+}
+document.addEventListener("keyup", onkeyup);
+document.addEventListener("keydown", onkeydown);
+
+// Touch devices
+var identifier = null;
+function getCurrentTouch (e) {
+  for (var i=0; i<e.changedTouches.length; ++i)
+    if (e.changedTouches[i].identifier === identifier)
+      return e.changedTouches[i];
+}
+function ontouchstart (e) {
+  e.preventDefault();
+  if (identifier !== null) return;
+  var touch = e.changedTouches[0];
+  identifier = touch.identifier;
+  spaceIsDown = true;
+  !end && spacedown();
+}
+function ontouchend (e) {
+  if (identifier === null) return;
+  var touch = getCurrentTouch(e);
+  if (!touch) return;
+  identifier = null;
+  spaceIsDown = false;
+  !end && spaceup();
+}
+function ontouchcancel (e) {
+  if (identifier === null) return;
+  var touch = getCurrentTouch(e);
+  if (!touch) return;
+  identifier = null;
+  spaceIsDown = false;
+  !end && spaceup();
+}
+document.addEventListener("touchstart", ontouchstart);
+document.addEventListener("touchend", ontouchend);
+document.addEventListener("touchcancel", ontouchcancel);
+
+var playClicked = false;
+function onPlay (e) {
+  if (playClicked) return;
+  playClicked = true;
+  e && e.preventDefault();
+  $intro.style.display = "none";
+  init();
+  start();
+}
+
+$play.addEventListener("click", onPlay, false);
+$play.addEventListener("touchend", onPlay, false);
+
+if (location.href.indexOf("skipintro")>-1) {
+  onPlay();
+}
+else {
+  $intro.style.display = "block";
+}
+message.innerHTML = "";
+
 } catch (e) {
-  document.getElementById("message").innerHTML = "Can't run the game";
+  $("message").innerHTML = "Can't run the game";
   var error = document.createElement("pre");
   error.innerHTML = e;
-  document.getElementById("overlay").appendChild(error);
+  $("overlay").appendChild(error);
   console.log(e);
   console.log(e.stack);
 }
+
+}());
